@@ -54,11 +54,15 @@ DataflowNodeT = TypeVar("DataflowNodeT", bound=DataflowPlanNode)
 
 @dataclass(frozen=True)
 class CteGenerationResult:
-    """This stores parameters for creating a dataset from a CTE."""
+    """记录把一个数据流节点改写为 WITH 子句后，外层查询引用它所需的信息。"""
 
+    # 让计划输出仍能追溯这个 WITH 定义来自哪一步数据流计算；不参与 SQL 连接条件。
     source_dataflow_plan_node_id: NodeId
+    # 实际写入 WITH 的 SQL 与别名；重复消费此分支时只需引用该别名。
     cte_node: SqlCteNode
+    # 外层读取 CTE 时要暴露的列，列名必须与下面的 instance_set 匹配。
     select_columns: Tuple[SqlSelectColumn, ...]
+    # 保存这些列的语义身份，让 CTE 虽变成表名，后续 JOIN/聚合仍能找到正确的指标和维度。
     instance_set: InstanceSet
 
     def get_sql_data_set(self) -> SqlDataSet:
@@ -84,6 +88,8 @@ class DataflowNodeToSqlCteVisitor(DataflowNodeToSqlSubqueryVisitor):
     The generated CTE nodes are collected instead of getting incorporated into the associated SQL query plan generated
     at each node so that the CTE nodes can be included at the top-level SELECT statement.
 
+    对被选中的共享节点生成 WITH 子句，其他节点沿用子查询转换逻辑。
+
     # TODO: Move these visitors to separate files at the end of the stack.
     """
 
@@ -99,9 +105,12 @@ class DataflowNodeToSqlCteVisitor(DataflowNodeToSqlSubqueryVisitor):
             semantic_manifest_lookup=semantic_manifest_lookup,
             output_column_orderer=output_column_orderer,
         )
+        # 只对复用价值较高的共享数据流节点改写为 WITH；其余仍按普通子查询展开。
         self._nodes_to_convert_to_cte = nodes_to_convert_to_cte
 
         # If a given node is supposed to use a CTE, map the node to the result.
+        # 第一次转换时保存 SQL 与输出语义；后续遇到同一数据流节点时引用 CTE 名称，
+        # 避免重复内联同一子查询，同时让外层仍能按 InstanceSet 识别列。
         self._node_to_cte_generation_result: Dict[DataflowPlanNode, CteGenerationResult] = {}
 
     def generated_cte_nodes(self) -> Sequence[SqlCteNode]:

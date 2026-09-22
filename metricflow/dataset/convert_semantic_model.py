@@ -196,6 +196,7 @@ class SemanticModelToDataSetConverter:
         table_alias: str,
     ) -> Tuple[Sequence[SimpleMetricInputInstance], Sequence[SqlSelectColumn]]:
         # Convert the simple metrics associated with the given model.
+        # 每个简单指标输入生成带 Spec 和关联列的 Instance，并配一条实际取值的 SQL 表达式。
         simple_metric_instances = []
         select_columns = []
         for (
@@ -219,6 +220,8 @@ class SemanticModelToDataSetConverter:
                     aggregation_state=AggregationState.NON_AGGREGATED,
                 )
                 simple_metric_instances.append(instance)
+                # case2 的 bookings 输入表达式为 1；列别名来自 Instance 的关联列，
+                # 后续 SelectorNode 通过 Spec 找到该 Instance，而非匹配源表物理列名。
                 select_columns.append(
                     SqlSelectColumn(
                         expr=SemanticModelToDataSetConverter._make_element_sql_expr(
@@ -430,6 +433,7 @@ class SemanticModelToDataSetConverter:
     def create_sql_source_data_set(self, model_reference: SemanticModelReference) -> SemanticModelDataSet:
         """Create an SQL source data set from a semantic model in the model."""
         # Gather all instances and columns from all semantic models.
+        # InstanceSet 描述源节点可提供哪些语义项；select_columns 则把它们映射到源表表达式。
         all_simple_metric_input_instances: List[SimpleMetricInputInstance] = []
         all_dimension_instances: List[DimensionInstance] = []
         all_time_dimension_instances: List[TimeDimensionInstance] = []

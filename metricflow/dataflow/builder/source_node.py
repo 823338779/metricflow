@@ -25,21 +25,25 @@ class SourceNodeSet:
 
     The components in this set do not need to be dynamically generated on a per-query basis for a given semantic
     manifest.
+
+    引擎初始化时预先建立这些源节点，后续每次查询从中选择合适的输入。
     """
 
     # Semantic models without simple-metric inputs are 1:1 mapped to a ReadSqlSourceNode. Semantic models containing simple-metric inputs are
     # mapped to components with a transformation node to add `metric_time` / to support multiple aggregation time
     # dimensions. Each semantic model containing simple-metric inputs with k different aggregation time dimensions is mapped to k
     # components.
+    # 选源器的左侧候选：除 measure 输入外已带有相应 metric_time 变换，
+    # 同一模型有多个聚合时间列时会产生不同候选。
     source_nodes_for_metric_queries: Tuple[DataflowPlanNode, ...]
 
-    # Semantic models are 1:1 mapped to a ReadSqlSourceNode.
+    # 补维度 JOIN 的右侧候选，也用于无指标的维度查询；它们的实体与维度决定可关联路径。
     source_nodes_for_group_by_item_queries: Tuple[DataflowPlanNode, ...]
 
-    # Provides time spines that can be used to satisfy time spine joins.
+    # 按粒度查完整时间序列，累计或补日期流程据此建立时间范围 JOIN。
     time_spine_read_nodes: Mapping[TimeGranularity, ReadSqlSourceNode]
 
-    # Provides time spines that can be used to satisfy metric_time without metrics.
+    # 无指标查询也能从时间脊输出逻辑 metric_time；避免依赖某张事实表是否有数据。
     time_spine_metric_time_nodes: Mapping[TimeGranularity, MetricTimeDimensionTransformNode]
 
     @property
@@ -92,6 +96,8 @@ class SourceNodeBuilder:
             model_lookup.semantic_model.reference: model_lookup for model_lookup in lookup.simple_metric_model_lookups
         }
         for data_set in data_sets:
+            # data_set 同时保存 InstanceSet（可提供的 Spec 与关联列）和读取源表的 SQL；
+            # SelectorNode 随后从这个输出中按 Spec 选择，而不是直接按物理列名选择。
             read_node = ReadSqlSourceNode.create(data_set)
             group_by_item_source_nodes.append(read_node)
 
@@ -106,6 +112,7 @@ class SourceNodeBuilder:
                 for (
                     time_dimension_name
                 ) in simple_metric_model_lookup.aggregation_time_dimension_name_to_simple_metric_inputs.keys():
+                    # 指标查询在读源节点外补出逻辑 metric_time，如 ds 对应 metric_time__day。
                     metric_time_transform_node = MetricTimeDimensionTransformNode.create(
                         parent_node=read_node,
                         aggregation_time_dimension_reference=TimeDimensionReference(time_dimension_name),

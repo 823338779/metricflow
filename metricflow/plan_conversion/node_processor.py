@@ -101,12 +101,20 @@ class PredicatePushdownState:
     The last will be updated as filters are applied via pushdown or by the original WhereFilterNode.
 
     Finally, the time_range_constraint property holds the time window for setting up a time range filter expression.
+
+    此对象沿指标分支传递，使构建器知道哪些过滤可提前作用在源节点上。
     """
 
+    # 用户请求的时间窗口；源选择与 ConstrainTimeRangeNode 会消费它。
+    # 累计指标可能先扩展读取范围，因此不能把它等同于最终结果的显示范围。
     time_range_constraint: Optional[TimeRangeConstraint]
     # TODO: Deduplicate where_filter_specs
+    # 所有待规划的 WHERE 条件；Builder 会逐项判断能否放在源侧，剩余条件保留到后续过滤节点。
     where_filter_specs: Tuple[WhereFilterSpec, ...]
+    # 已在某个上游节点落实的条件；继续构建派生分支时据此避免重复应用同一过滤。
     applied_where_filter_specs: FrozenOrderedSet[WhereFilterSpec]
+    # 安全性边界：例如累计指标的时间过滤过早执行会截断累计窗口，
+    # 因此构建器只对这里允许的条件类型尝试源侧过滤。
     pushdown_enabled_types: FrozenOrderedSet[PredicateInputType]
 
     @staticmethod
@@ -357,7 +365,7 @@ class PreJoinNodeProcessor:
         predicate_pushdown_state: PredicatePushdownState,
         metric_time_dimension_reference: TimeDimensionReference,
     ) -> Sequence[DataflowPlanNode]:
-        """Adds filter predicate nodes to the input nodes as appropriate."""
+        """只对可安全下推的左侧候选包装时间和 WHERE 过滤节点。"""
         if predicate_pushdown_state.has_time_range_constraint_to_push_down:
             source_nodes = self._add_time_range_constraint(
                 source_nodes=source_nodes,
@@ -412,7 +420,7 @@ class PreJoinNodeProcessor:
         where_filter_specs: Sequence[WhereFilterSpec],
         enabled_element_types: FrozenSet[LinkableElementType],
     ) -> Sequence[DataflowPlanNode]:
-        """Processes where filter specs and evaluates their fitness for pushdown against the provided node set."""
+        """只把来源单一、元素类型允许且源输出已具备所需列的条件下推。"""
         eligible_filter_specs_by_model: Dict[SemanticModelReference, Sequence[WhereFilterSpec]] = {}
         for spec in where_filter_specs:
             semantic_models = {
@@ -426,6 +434,7 @@ class PreJoinNodeProcessor:
                 for annotated_spec in spec.element_set.annotated_specs
                 if annotated_spec.element_type not in enabled_element_types
             }
+            # 跨语义模型的条件必须等关联后再处理。
             if len(semantic_models) == 1 and len(invalid_element_types) == 0:
                 model = semantic_models.pop()
                 eligible_filter_specs_by_model[model] = tuple(eligible_filter_specs_by_model.get(model, tuple())) + (
@@ -438,6 +447,7 @@ class PreJoinNodeProcessor:
             if len(node_semantic_models) == 1 and node_semantic_models[0] in eligible_filter_specs_by_model:
                 eligible_filter_specs = eligible_filter_specs_by_model[node_semantic_models[0]]
                 source_node_specs = self._node_data_set_resolver.get_output_data_set(source_node).instance_set.spec_set
+                # 即使条件属于同一模型，也要确认当前候选节点实际输出了条件引用的列。
                 matching_filter_specs = [
                     filter_spec
                     for filter_spec in eligible_filter_specs
@@ -487,7 +497,7 @@ class PreJoinNodeProcessor:
     def _get_candidates_nodes_for_multi_hop(
         self, desired_linkable_spec: LinkableInstanceSpec, nodes: Sequence[DataflowPlanNode], join_type: SqlJoinType
     ) -> Sequence[MultiHopJoinCandidate]:
-        """Assemble nodes representing all possible one-hop joins."""
+        """对恰好两段实体路径构造右侧预连接节点，以满足多跳请求项。"""
         if len(desired_linkable_spec.entity_links) > MAX_JOIN_HOPS:
             raise FeatureNotSupportedError(
                 f"Multi-hop joins with more than {MAX_JOIN_HOPS} entity links not yet supported. "
@@ -500,6 +510,7 @@ class PreJoinNodeProcessor:
         logger.debug(LazyFormat(lambda: f"Creating nodes for {desired_linkable_spec}"))
 
         for first_node_that_could_be_joined in nodes:
+            # 第一段右侧节点须同时含路径的两个实体，才能承接左侧并继续连末端模型。
             data_set_of_first_node_that_could_be_joined = self._node_data_set_resolver.get_output_data_set(
                 first_node_that_could_be_joined
             )
@@ -518,6 +529,7 @@ class PreJoinNodeProcessor:
                 continue
 
             for second_node_that_could_be_joined in nodes:
+                # 末端节点须含第二个实体和目标元素，例如 device 与 platform。
                 if not (
                     self._node_contains_entity(
                         node=second_node_that_could_be_joined,
@@ -557,6 +569,7 @@ class PreJoinNodeProcessor:
 
                 # Remove simple-metric inputs from the joined node.
                 specs = data_set_of_second_node_that_can_be_joined.instance_set.spec_set
+                # 多跳预连接只需维度、实体、时间及分组指标，不传播末端的指标输入。
                 selector_node_for_joinable = SelectorNode.create(
                     parent_node=second_node_that_could_be_joined,
                     include_specs=group_specs_by_type(
@@ -617,7 +630,7 @@ class PreJoinNodeProcessor:
         nodes: Sequence[DataflowPlanNode],
         join_type: SqlJoinType,
     ) -> Sequence[DataflowPlanNode]:
-        """Assemble nodes representing all possible one-hop joins."""
+        """将两跳预连接节点加入右侧候选，并按节点来源去重。"""
         all_multi_hop_join_candidates: List[MultiHopJoinCandidate] = []
         lineage_for_all_multi_hop_join_candidates: Set[MultiHopJoinCandidateLineage] = set()
 
@@ -643,6 +656,7 @@ class PreJoinNodeProcessor:
 
         A simple filter is to remove any nodes that don't share a common element with the query. Having a common element
         doesn't mean that the node will be useful, but not having common elements definitely means it's not useful.
+        这里只做廉价预筛；连接是否合法仍由 NodeEvaluatorForLinkableInstances 判断。
         """
         relevant_element_names = {x.element_name for x in desired_linkable_specs}.union(
             {y.element_name for x in desired_linkable_specs for y in x.entity_links}
@@ -662,6 +676,7 @@ class PreJoinNodeProcessor:
             metric_time_dimension_reference.element_name in relevant_element_names
             and not metric_time_dimension_used_in_linked_spec
         ):
+            # 普通 metric_time 在大多数源都存在，不能仅凭它认定右侧节点有用。
             relevant_element_names.remove(metric_time_dimension_reference.element_name)
 
         logger.debug(LazyFormat(lambda: f"Relevant names are: {relevant_element_names}"))
@@ -684,6 +699,7 @@ class PreJoinNodeProcessor:
 
             # Used for group-by-item-values queries.
             if node in time_spine_metric_time_nodes:
+                # 纯分组项查询可从时间脊取 metric_time，需保留这个特例。
                 logger.debug(LazyFormat(lambda: f"Including {node} since it matches `time_spine_node`"))
                 relevant_nodes.append(node)
                 continue

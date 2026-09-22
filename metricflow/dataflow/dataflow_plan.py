@@ -33,6 +33,8 @@ class DataflowPlanNode(DagNode["DataflowPlanNode"], Visitable, ABC):
 
     Each node in the graph performs an operation from the data that comes from the parent nodes, and the result is
     passed to the child nodes. The flow of data starts from source nodes, and ends at sink nodes.
+
+    数据流中的一步操作，例如读源表、聚合或合并；其父节点提供输入数据。
     """
 
     @property
@@ -95,7 +97,10 @@ class DataflowPlanNode(DagNode["DataflowPlanNode"], Visitable, ABC):
 
 
 class DataflowPlan(MetricFlowDag[DataflowPlanNode]):
-    """Describes the flow of metric data as it goes from source nodes to sink nodes in the graph."""
+    """Describes the flow of metric data as it goes from source nodes to sink nodes in the graph.
+
+    指标依赖图转换后的数据处理图；后续会据此生成 SQL 计划和最终 SQL。
+    """
 
     def __init__(self, sink_nodes: Sequence[DataflowPlanNode], plan_id: Optional[DagId] = None) -> None:  # noqa: D107
         assert len(sink_nodes) == 1, f"Exactly 1 sink node is supported. Got: {sink_nodes}"

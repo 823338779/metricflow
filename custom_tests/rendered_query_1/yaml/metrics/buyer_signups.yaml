@@ -1,0 +1,8 @@
+metric:
+  name: buyer_signups
+  type: simple
+  type_params:
+    expr: "1"
+    metric_aggregation_params:
+      semantic_model: buyer_registry
+      agg: sum

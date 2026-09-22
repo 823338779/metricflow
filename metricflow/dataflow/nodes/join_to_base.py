@@ -20,23 +20,36 @@ from metricflow_semantic_interfaces.references import EntityReference
 
 @dataclass(frozen=True)
 class ValidityWindowJoinDescription:
-    """Encapsulates details about join constraints around validity windows."""
+    """Encapsulates details about join constraints around validity windows.
 
+    关联有生效区间的维度表时，左侧时间需落在开始与结束时间之间。
+    """
+
+    # 维度记录的生效起点和终点列。
     window_start_dimension: TimeDimensionSpec
     window_end_dimension: TimeDimensionSpec
 
 
 @dataclass(frozen=True)
 class JoinDescription:
-    """Describes how data from a node should be joined to data from another node."""
+    """Describes how data from a node should be joined to data from another node.
 
+    从 JoinLinkableInstancesRecipe 转成的实际数据流 JOIN 描述。
+    """
+
+    # 右侧提供缺失维度的分支；SQL Visitor 会递归转成 JOIN 右侧来源。
     join_node: DataflowPlanNode
+    # 左右两侧用哪个语义实体对齐，之后被解析为真实 ON 列；CROSS JOIN 可以为空。
     join_on_entity: Optional[EntityReference]
+    # 决定补维度时是否保留左侧事实行；通常为 LEFT OUTER，区别于指标结果对齐用的 FULL OUTER。
     join_type: SqlJoinType
 
+    # 在实体键之外约束分区，防止同一实体跨分区匹配而放大事实行数。
     join_on_partition_dimensions: Tuple[PartitionDimensionJoinDescription, ...]
+    # 时间分区的对应条件，作用同上；SQL Visitor 将它们追加到 ON。
     join_on_partition_time_dimensions: Tuple[PartitionTimeDimensionJoinDescription, ...]
 
+    # 缓慢变化维度的有效期条件，确保事实时间落在右侧维度记录的生效区间。
     validity_window: Optional[ValidityWindowJoinDescription] = None
 
     def __post_init__(self) -> None:  # noqa: D105
@@ -51,9 +64,13 @@ class JoinOnEntitiesNode(DataflowPlanNode):
     Attributes:
         left_node: Node with standard output.
         join_targets: Other sources that should be joined to this node.
+
+    简单指标的源分支需要外部维度时，把维度来源接到左侧分支。
     """
 
+    # 保留指标输入和已有分组项的基底；补维度的 JOIN 应以它为左侧，避免丢失事实行。
     left_node: DataflowPlanNode
+    # 每个目标补充一组缺失维度，并携带实体、分区和有效期条件供 SQL Visitor 生成 ON。
     join_targets: Tuple[JoinDescription, ...]
 
     @staticmethod

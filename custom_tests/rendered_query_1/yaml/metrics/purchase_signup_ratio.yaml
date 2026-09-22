@@ -1,0 +1,8 @@
+metric:
+  name: purchase_signup_ratio
+  type: ratio
+  type_params:
+    numerator:
+      name: completed_purchases
+    denominator:
+      name: buyer_signups

@@ -14,7 +14,10 @@ from metricflow.dataflow.dataflow_plan_visitor import DataflowPlanNodeVisitor
 
 @dataclass(frozen=True, eq=False)
 class WriteToResultDataTableNode(DataflowPlanNode):
-    """A node where incoming data gets written to a data_table."""
+    """A node where incoming data gets written to a data_table.
+
+    查询的数据流终点；explain() 据此生成 SELECT 执行任务，但不会真正写入结果表。
+    """
 
     def __post_init__(self) -> None:  # noqa: D105
         super().__post_init__()

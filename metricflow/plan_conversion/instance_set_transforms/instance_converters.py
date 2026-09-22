@@ -234,6 +234,7 @@ class SelectElementsTransform(InstanceSetTransform[InstanceSet]):
 
     def _should_pass(self, element_spec: InstanceSpec) -> bool:
         # TODO: Use better matching function
+        # include_specs 与父节点 Instance 的 spec 比较，匹配到的 Instance 才进入输出。
         if self._include_specs:
             return any(x == element_spec for x in self._include_specs.all_specs)
         elif self._exclude_specs:
@@ -242,6 +243,7 @@ class SelectElementsTransform(InstanceSetTransform[InstanceSet]):
 
     def transform(self, instance_set: InstanceSet) -> InstanceSet:  # noqa: D102
         # Sanity check to make sure the specs are in the instance set
+        # 校验发生在处理 SelectorNode 时，而非构造 include_specs 时；缺失项直接报错。
         available_specs = instance_set.spec_set.all_specs
         if self._include_specs:
             include_specs_not_found = []

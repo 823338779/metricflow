@@ -1,0 +1,8 @@
+metric:
+  name: gross_sales
+  type: simple
+  type_params:
+    expr: line_amount
+    metric_aggregation_params:
+      semantic_model: basket_lines
+      agg: sum

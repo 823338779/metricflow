@@ -52,7 +52,10 @@ logger = logging.getLogger(__name__)
 
 
 class DataflowToExecutionPlanConverter(DataflowPlanNodeVisitor[ConvertToExecutionPlanResult]):
-    """Converts a dataflow plan to an execution plan."""
+    """Converts a dataflow plan to an execution plan.
+
+    explain() 的最后一段：DataflowPlan -> SqlPlan -> 方言 SQL -> 带 SQL 的执行任务。
+    """
 
     def __init__(
         self,
@@ -69,10 +72,16 @@ class DataflowToExecutionPlanConverter(DataflowPlanNodeVisitor[ConvertToExecutio
             sql_client: The client to use for running queries.
             sql_optimization_level: The optimization level to use for generating the SQL.
         """
+        # 消费数据流终点，递归生成可优化的 SQL 节点树；此时还没有方言 SQL 字符串。
         self._sql_plan_converter = sql_plan_converter
+        # 消费 SQL 节点树，决定函数/类型等方言写法并产出 SQL 文本与绑定参数。
         self._sql_plan_renderer = sql_plan_renderer
+        # sql_engine_type 参与 SQL 生成选项；同时放进最终执行任务，供 query() 真正执行。
+        # explain() 只构造任务，不通过此客户端发起查询。
         self._sql_client = sql_client
+        # 决定是否启用列裁剪、CTE 等 SQL 层优化；区别于先前合并数据流分支的优化选项。
         self._optimization_level = sql_optimization_level
+        # 从 QuerySpec 的原始输入顺序构建，并传给 SQL Visitor 排列用户可见的 SELECT 列。
         self._output_column_orderer: Optional[OutputColumnOrderer] = None
 
     def _convert_to_sql_plan(self, node: DataflowPlanNode) -> ConvertToSqlPlanResult:
@@ -91,6 +100,7 @@ class DataflowToExecutionPlanConverter(DataflowPlanNodeVisitor[ConvertToExecutio
 
     @override
     def visit_write_to_result_data_table_node(self, node: WriteToResultDataTableNode) -> ConvertToExecutionPlanResult:
+        """把终点节点转换成 SQL 计划、SQL 文本和 SELECT 执行任务。"""
         convert_to_sql_plan_result = self._convert_to_sql_plan(node)
         render_sql_result = self._render_sql(convert_to_sql_plan_result)
         execution_plan = ExecutionPlan(
@@ -134,7 +144,10 @@ class DataflowToExecutionPlanConverter(DataflowPlanNodeVisitor[ConvertToExecutio
         dataflow_plan: DataflowPlan,
         output_column_orderer: Optional[OutputColumnOrderer] = None,
     ) -> ConvertToExecutionPlanResult:
-        """Convert the dataflow plan to an execution plan."""
+        """Convert the dataflow plan to an execution plan.
+
+        从 sink_node 开始分派；普通 explain() 最终走到 visit_write_to_result_data_table_node()。
+        """
         self._output_column_orderer = output_column_orderer
         return dataflow_plan.sink_node.accept(self)
 

@@ -20,11 +20,16 @@ from metricflow_semantic_interfaces.type_enums import TimeGranularity
 
 @dataclass(frozen=True, order=True)
 class MetricSpec(InstanceSpec):  # noqa: D101
+    # 定义查找键；Builder 用它取完整 Metric 再决定走简单、派生或累计计算路径。
     # Time-over-time could go here
     element_name: str
+    # 本次引用附带的过滤；与定义内置 filter 合并，且进入分支缓存键以区分不同计算结果。
     where_filter_specs: Tuple[WhereFilterSpec, ...]
+    # 对外列名要求；不会改变定义查找键，但影响最后的输出列关联。
     alias: Optional[str]
+    # 例如“上一周”窗口；Builder 要调整读取范围并在时间脊上对齐结果，不能只改 SELECT 别名。
     offset_window: Optional[TimeWindow]
+    # 偏移到指定粒度边界（如上月同期）；与 offset_window 同属时间变换要求。
     offset_to_grain: Optional[TimeGranularity]
 
     @staticmethod

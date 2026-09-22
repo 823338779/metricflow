@@ -45,11 +45,14 @@ class ExecutionPlanTask(DagNode["ExecutionPlanTask"], Visitable, ABC):
 
 @dataclass(frozen=True)
 class SqlStatement:
-    """Encapsulates a SQL statement along with the bind parameters that should be used."""
+    """Encapsulates a SQL statement along with the bind parameters that should be used.
+
+    explain().sql_statement 返回的对象；sql 是最终文本，bind_parameter_set 是待绑定的参数。
+    """
 
     # This field will be renamed as it is confusing given the class name.
-    sql: str
-    bind_parameter_set: SqlBindParameterSet
+    sql: str  # 已按目标方言渲染的 SQL 文本。
+    bind_parameter_set: SqlBindParameterSet  # 执行时传给数据库客户端的绑定参数。
 
     @property
     def without_descriptions(self) -> SqlStatement:

@@ -36,7 +36,10 @@ logger = logging.getLogger(__name__)
 
 
 class DataflowToSqlPlanConverter:
-    """Generates an SQL query plan from a node in the metric dataflow plan."""
+    """Generates an SQL query plan from a node in the metric dataflow plan.
+
+    将优化后的 DataflowPlanNode 树逐个转换为 SELECT/JOIN 等 SQL 计划节点，再执行 SQL 计划优化。
+    """
 
     def __init__(
         self,
@@ -50,8 +53,11 @@ class DataflowToSqlPlanConverter:
             queries.
             semantic_manifest_lookup: Self-explanatory.
         """
+        # 传给 SQL Visitor，确保它创建的 SELECT 别名与 InstanceSet 中记录的列关联一致。
         self._column_association_resolver = column_association_resolver
+        # 传给子查询/CTE Visitor；具体指标表达式与时间脊选择在那里发生。
         self._semantic_manifest_lookup = semantic_manifest_lookup
+        # 以下几个预建索引在当前 Converter 中未再读取；不能把它们理解成这里生成 SQL 的步骤。
         self._metric_lookup = semantic_manifest_lookup.metric_lookup
         self._semantic_model_lookup = semantic_manifest_lookup.semantic_model_lookup
         self._time_spine_sources = TimeSpineSource.build_standard_time_spine_sources(
@@ -73,7 +79,10 @@ class DataflowToSqlPlanConverter:
         sql_query_plan_id: Optional[DagId] = None,
         output_column_orderer: Optional[OutputColumnOrderer] = None,
     ) -> ConvertToSqlPlanResult:
-        """Create an SQL query plan that represents the computation up to the given dataflow plan node."""
+        """Create an SQL query plan that represents the computation up to the given dataflow plan node.
+
+        sql_engine_type 影响部分 SQL 生成选项；真正的 PostgreSQL 等方言文本在 Renderer 阶段输出。
+        """
         # In case there are bugs that raise exceptions at higher optimization levels, retry generation at a lower
         # optimization level. Generally skip O0 (unless requested) as that level does not include the column pruner.
         # Without that, the generated SQL can be enormous.
@@ -177,6 +186,7 @@ class DataflowToSqlPlanConverter:
                 semantic_manifest_lookup=self._semantic_manifest_lookup,
                 output_column_orderer=output_column_orderer,
             )
+            # 从终点递归访问父节点，得到包含 SQL SELECT 节点与输出实例的 SqlDataSet。
             data_set = to_sql_subquery_visitor.get_output_data_set(dataflow_plan_node)
         else:
             to_sql_cte_visitor = DataflowNodeToSqlCteVisitor(
@@ -216,6 +226,7 @@ class DataflowToSqlPlanConverter:
                 )
             )
 
+        # SQL 计划优化完成后返回结构化节点图，不在此处拼接最终 SQL 字符串。
         return ConvertToSqlPlanResult(
             instance_set=data_set.instance_set,
             sql_plan=SqlPlan(render_node=sql_node, plan_id=sql_query_plan_id),

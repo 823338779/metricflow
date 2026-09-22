@@ -84,9 +84,16 @@ class MetricQueryElementCollector(MetricQueryElementLookup):
 
 @fast_frozen_dataclass()
 class MetricQueryPropertySet(MetricFlowPrettyFormattable):
-    """Properties that are used to group query elements into a common query."""
+    """Properties that are used to group query elements into a common query.
 
+    同一 SQL 查询可合并的条件：分组项和过滤条件的下推状态需要兼容。
+    """
+
+    # 指标应输出在哪个粒度。构建器据此要求源节点提供这些可关联项并确定 GROUP BY；
+    # 它也参与查询元素分组，避免把不同粒度的指标放进同一计算节点。
     group_by_item_specs: FrozenOrderedSet[LinkableInstanceSpec]
+    # 携带待执行、已执行和允许下推的过滤状态。构建器据此选择过滤位置；
+    # 相同指标若状态不同，合并计算可能改变累计指标等结果，因此不能只按名称复用。
     predicate_pushdown_state: PredicatePushdownState
 
     @staticmethod
@@ -111,6 +118,7 @@ class MetricQueryPropertySet(MetricFlowPrettyFormattable):
 
     @cached_property
     def group_by_item_spec_set(self) -> LinkableSpecSet:  # noqa: D102
+        """将分组项集合包装成便于按维度、实体和时间维度查找的 LinkableSpecSet。"""
         return LinkableSpecSet.create_from_specs(self.group_by_item_specs)
 
 
@@ -125,9 +133,13 @@ class MetricQueryElement:
     `bookings by metric_time` and `listings by metric_time`.
 
     For query elements to be composed into a query, the query elements must have the same query properties.
+
+    可把它看作“一个 MetricSpec + 计算它时所需的分组和过滤上下文”。
     """
 
+    # 此查询元素的目标指标；与 query_properties 一起决定它能否与其他元素共用求值节点。
     metric_spec: MetricSpec
+    # 目标指标所处的粒度和过滤上下文；依赖指标可以沿边继承或调整这些条件。
     query_properties: MetricQueryPropertySet
 
     @staticmethod

@@ -1,0 +1,23 @@
+semantic_model:
+  name: basket_lines
+  node_relation:
+    schema_name: $source_schema
+    alias: fct_order_items
+  defaults:
+    agg_time_dimension: line_recorded_on
+  dimensions:
+    - name: line_recorded_on
+      type: time
+      expr: ordered_at
+      type_params:
+        time_granularity: day
+  entities:
+    - name: basket_line
+      type: primary
+      expr: order_item_id
+    - name: purchase
+      type: foreign
+      expr: order_id
+    - name: sku
+      type: foreign
+      expr: product_id

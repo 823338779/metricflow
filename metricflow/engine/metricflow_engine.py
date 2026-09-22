@@ -143,6 +143,8 @@ class OutputColumnOrderMode(Enum):
 class MetricFlowQueryRequest:
     """Encapsulates the parameters for a metric query.
 
+    用户传入 explain()/query() 的原始请求；名称等参数尚未解析成内部 Spec。
+
     TODO: This has turned into a bag of parameters that make it difficult to use without a bunch of conditionals.
 
     metric_names: Names of the metrics to query.
@@ -163,8 +165,10 @@ class MetricFlowQueryRequest:
 
     request_id: MetricFlowRequestId
     saved_query_name: Optional[str]
+    # 例如 ["bookings"]；解析器先校验名称和修饰条件，再变成 Builder 使用的 MetricSpec。
     metric_names: Optional[Sequence[str]]
     metrics: Optional[Sequence[MetricQueryParameter]]
+    # 例如 ["metric_time__day"]；解析后的 Spec 决定选源时要补哪些维度、最终按什么粒度聚合。
     group_by_names: Optional[Sequence[str]]
     group_by: Optional[tuple[GroupByQueryParameter, ...]]
     limit: Optional[int]
@@ -264,16 +268,25 @@ class MetricFlowQueryResult:
 
 @dataclass(frozen=True)
 class MetricFlowExplainResult:
-    """Returns plans for resolving a query."""
+    """Returns plans for resolving a query.
 
+    explain() 的结果：保留解析后的查询、数据流计划和最终执行计划，可从中读取 SQL。
+    """
+
+    # 将外部名称解析为内部 Spec 的结果；可对照它判断某个 SQL 列来自哪个指标或分组请求。
     query_spec: MetricFlowQuerySpec
+    # 指标依赖、选源、JOIN、聚合后的操作图；可检查为何某个查询需要额外关联或分支合并。
     dataflow_plan: DataflowPlan
+    # 同时保留结构化 SQL、方言文本和执行任务；sql_statement 从任务里读取最终文本及参数。
     convert_to_execution_plan_result: ConvertToExecutionPlanResult
     output_table: Optional[SqlTable] = None
 
     @property
     def sql_statement(self) -> SqlStatement:
-        """Return the SQL query that would be run for the given query."""
+        """Return the SQL query that would be run for the given query.
+
+        返回待执行的 SQL 及绑定参数；读取此属性不会执行查询。
+        """
         execution_plan = self.execution_plan
         if len(execution_plan.tasks) != 1:
             raise NotImplementedError(
@@ -296,6 +309,7 @@ class MetricFlowExplainResult:
 
     @property
     def execution_plan(self) -> ExecutionPlan:  # noqa: D102
+        """返回执行任务组成的计划；explain() 生成计划但不会运行它。"""
         return self.convert_to_execution_plan_result.execution_plan
 
 
@@ -555,6 +569,7 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
         return TimeRangeConstraint.all_time()
 
     def _create_execution_plan(self, mf_query_request: MetricFlowQueryRequest) -> MetricFlowExplainResult:
+        # explain() 与 query() 共用此链路：请求 -> QuerySpec -> DataflowPlan -> SQL/ExecutionPlan。
         if self._reset_id_enumeration:
             logger.debug(
                 LazyFormat(
@@ -586,6 +601,7 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
                 apply_group_by=mf_query_request.apply_group_by,
             ).query_spec
         else:
+            # 把 metric_names/group_by_names 等输入解析为具体的 MetricSpec、维度 Spec 等。
             query_spec = self._query_parser.parse_and_validate_query(
                 metric_names=mf_query_request.metric_names,
                 metrics=mf_query_request.metrics,
@@ -612,6 +628,7 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
                 time_dimension_specs=query_spec.time_dimension_specs,
             )
         if query_spec.metric_specs:
+            # 先展开指标依赖，再把指标计算计划转换为数据流操作图。
             logger.info(
                 LazyFormat(
                     "Building dataflow plan", dataflow_plan_optimizations=mf_query_request.dataflow_plan_optimizations
@@ -658,6 +675,7 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
         else:
             assert_values_exhausted(output_column_order_mode)
 
+        # 将数据流操作图转成 SQL 计划、渲染 SQL，并封装成执行任务。
         convert_to_execution_plan_result = _to_execution_plan_converter.convert_to_execution_plan(
             dataflow_plan=dataflow_plan,
             output_column_orderer=(output_column_orderer if not query_spec.min_max_only else None),
@@ -670,6 +688,7 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
 
     @log_call(module_name=__name__, telemetry_reporter=_telemetry_reporter)
     def explain(self, mf_request: MetricFlowQueryRequest) -> MetricFlowExplainResult:  # noqa: D102
+        """解析请求并生成可查看的计划和 SQL，不执行 SQL。"""
         with ExecutionTimer("Explain Request", duration_warning_threshold=5.0):
             return self._create_execution_plan(mf_request)
 

@@ -1,0 +1,20 @@
+semantic_model:
+  name: checkout_activity
+  node_relation:
+    schema_name: $source_schema
+    alias: fct_orders
+  defaults:
+    agg_time_dimension: placed_on
+  dimensions:
+    - name: placed_on
+      type: time
+      expr: ordered_at
+      type_params:
+        time_granularity: day
+  entities:
+    - name: purchase
+      type: primary
+      expr: order_id
+    - name: buyer
+      type: foreign
+      expr: customer_id

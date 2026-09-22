@@ -95,6 +95,9 @@ class StructuredLinkableSpecName:
         If `metric_subquery_entity_link_names` is specified, this represents a metric. Metrics follow a different
         format - if same entity links are used in inner & outer query, use standard qualified name (country__bookings).
         Else, specify both sets of entity links (listing__country__user__country__bookings).
+
+        按实体路径、元素名及时间粒度或日期部分拼接双下划线限定名；
+        日期部分存在时不再附加粒度，按指标分组时还需考虑内外层实体路径。
         """
         entity_link_names = self.entity_link_names
         if self.metric_subquery_entity_link_names is not None:

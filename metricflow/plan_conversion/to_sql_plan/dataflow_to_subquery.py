@@ -154,6 +154,8 @@ logger = logging.getLogger(__name__)
 class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
     """Generates a SQL query plan by converting a node's parents to sub-queries.
 
+    每种 DataflowPlanNode 对应一个 visit_* 方法；返回的 SqlDataSet 同时保留 SQL 节点和输出列语义。
+
     TODO: Split classes in this file to separate files.
     """
 
@@ -171,18 +173,29 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
             queries.
             semantic_manifest_lookup: Self-explanatory.
         """
+        # 当前数据集的语义 Spec 到列名的约定；构造 SELECT、JOIN ON 和输出实例时共用它，
+        # 避免同一维度在不同层子查询中被引用为不同列名。
         self._column_association_resolver = column_association_resolver
+        # 保留完整清单查找入口，供 copy() 创建携带同一语义上下文的新 Visitor。
         self._semantic_manifest_lookup = semantic_manifest_lookup
+        # ComputeMetricsNode/合并结果需要指标定义来选择表达式和处理聚合后的指标列。
         self._metric_lookup = semantic_manifest_lookup.metric_lookup
+        # 由清单预先取得的索引；当前 Visitor 并未读取此字段，来源 SQL 由 SqlDataSet 承载。
         self._semantic_model_lookup = semantic_manifest_lookup.semantic_model_lookup
+        # 通过简单指标名取得其原始 measure 配置，供聚合表达式与聚合时间列的构造使用。
         self._manifest_object_lookup = semantic_manifest_lookup.manifest_object_lookup
+        # 按被请求的时间粒度选择日期序列来源，用于累计指标等需要填齐时间轴的 SQL。
         self._time_spine_sources = TimeSpineSource.build_standard_time_spine_sources(
             semantic_manifest_lookup.semantic_manifest
         )
+        # 自定义粒度 JOIN 时按粒度名查对应时间脊；普通日期粒度不消费它。
         self._custom_granularity_time_spine_sources = TimeSpineSource.build_custom_time_spine_sources(
             tuple(self._time_spine_sources.values())
         )
+        # 避免多指标共享上游节点时重复转换；缓存值同时含 SQL 与输出语义。
+        # 再次读取时复制 SQL 节点，使后续层能安全地将它接到不同父查询中。
         self._node_to_output_data_set: Dict[DataflowPlanNode, SqlDataSet] = _node_to_output_data_set or {}
+        # 仅在构造面向用户的输出列时使用，按原始请求顺序排列指标和分组项；不改变聚合语义。
         self._output_column_orderer = output_column_orderer
 
     def _next_unique_table_alias(self) -> str:
@@ -197,6 +210,8 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
         """Cached since this will be called repeatedly during the computation of multiple metrics.
 
         # TODO: The cache needs to be pruned, but has not yet been an issue.
+
+        访问一个 Dataflow 节点并生成其 SqlDataSet；访问父节点时递归调用此方法。
         """
         if node not in self._node_to_output_data_set:
             result = node.accept(self)
@@ -517,6 +532,8 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
         Any node operating on the output of this node will need to use the simple-metric aliases instead of
         the simple-metric names as references.
 
+        从父节点读未聚合的指标输入，生成 SUM/COUNT 等 SELECT 列和相应 GROUP BY。
+
         """
         # Get the data from the parent, and change simple-metric input instances to the aggregated state.
         from_data_set: SqlDataSet = self.get_output_data_set(node.parent_node)
@@ -566,7 +583,10 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
         )
 
     def visit_compute_metrics_node(self, node: ComputeMetricsNode) -> SqlDataSet:
-        """Generates the query that realizes the behavior of ComputeMetricsNode."""
+        """Generates the query that realizes the behavior of ComputeMetricsNode.
+
+        从聚合输入生成最终指标表达式；简单指标通常引用已聚合列，派生指标会组合其他指标列。
+        """
         from_data_set: SqlDataSet = self.get_output_data_set(node.parent_node)
         from_data_set_alias = self._next_unique_table_alias()
 
@@ -864,20 +884,26 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
         )
 
     def visit_selector_node(self, node: SelectorNode) -> SqlDataSet:
-        """Generates the query that realizes the behavior of SelectorNode."""
+        """Generates the query that realizes the behavior of SelectorNode.
+
+        从父节点的 InstanceSet 按 include_specs 选取语义项，再生成对应的 SQL 列。
+        """
         from_data_set: SqlDataSet = self.get_output_data_set(node.parent_node)
         output_instance_set = from_data_set.instance_set.transform(SelectElementsTransform(node.include_specs))
         from_data_set_alias = self._next_unique_table_alias()
 
         # Also, the output columns should always follow the resolver format.
+        # 更新所选 Instance 的关联列名，使输出别名符合当前列名解析规则。
         output_instance_set = output_instance_set.transform(ChangeAssociatedColumns(self._column_association_resolver))
 
         # This creates select expressions for all columns referenced in the instance set.
+        # 使用匹配到的 Instance 生成 SELECT 列；include_specs 本身不存储物理列名。
         select_columns = output_instance_set.transform(
             CreateSelectColumnsForInstances(from_data_set_alias, self._column_association_resolver)
         ).get_columns()
 
         # If distinct values requested, group by all select columns.
+        # distinct=True 时按所有选中列分组以去重；case2 默认不去重。
         group_bys = select_columns if node.distinct else ()
         return SqlDataSet(
             instance_set=output_instance_set,
@@ -1064,6 +1090,10 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
         returns NULL. Unfortunately, there's no way to do a robust NULL-safe comparison across engines in a FULL
         OUTER JOIN context, because many engines do not support complex ON conditions or other techniques we might
         use to apply a sentinel value for NULL to NULL comparisons.
+
+        先读取各父分支的 InstanceSet，要求它们具有相同的可关联分组项；有分组项时
+        用这些列作 FULL OUTER JOIN 键，无分组项时用 CROSS JOIN。输出键用 COALESCE 保留
+        任一分支出现的分组值，并再次 GROUP BY 处理含 NULL 键可能造成的重复行。
         """
         assert (
             len(node.parent_nodes) > 1
@@ -1207,6 +1237,9 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
         contains is a subset of the input data set. Only simple-metric instances that have an aggregation time dimension
         matching the one defined in the node will be passed. In addition, an additional time dimension instance for
         "metric time" will be included. See DataSet.metric_time_dimension_reference().
+
+        以源模型的聚合时间维度为依据，补出 metric_time 的 Spec 与关联列；
+        例如 case2 由 ds__day 生成 metric_time__day，无需源表存在同名物理列。
         """
         input_data_set: SqlDataSet = self.get_output_data_set(node.parent_node)
 

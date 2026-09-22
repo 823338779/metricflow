@@ -20,12 +20,18 @@ if typing.TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class SqlJoinDescription:
-    """Describes how sources should be joined together."""
+    """Describes how sources should be joined together.
 
-    # The source that goes on the right side of the JOIN keyword.
+    已确定 SQL JOIN 类型与 ON 条件；区别于数据流层只描述合并意图的 CombineAggregatedOutputsNode。
+    """
+
+    # 被并入当前 SELECT 的右侧计算结果；Renderer 会递归渲染它，而不把它当作已存在的表。
     right_source: SqlPlanNode
+    # 本层 ON/SELECT 引用右侧列时使用的表别名，须与右侧来源引用保持一致。
     right_source_alias: str
+    # 决定未匹配行的保留方式；维度补齐通常 LEFT，指标分支对齐通常 FULL OUTER。
     join_type: SqlJoinType
+    # 从实体键或共同分组项构建的匹配条件；CROSS JOIN 无匹配键时为空。
     on_condition: Optional[SqlExpressionNode] = None
 
     def with_right_source(self, new_right_source: SqlPlanNode) -> SqlJoinDescription:
@@ -40,6 +46,7 @@ class SqlJoinDescription:
 
 @dataclass(frozen=True)
 class SqlOrderByDescription:  # noqa: D101
+    # ORDER BY 表达式及是否降序。
     expr: SqlExpressionNode
     desc: bool
 
@@ -58,18 +65,31 @@ class SqlSelectStatementNode(SqlPlanNode):
         where: The where clause expression.
         limit: The limit of the number of rows to return.
         distinct: Whether the select statement should return distinct rows.
+
+    表示一层完整 SELECT；子查询、JOIN、WHERE、GROUP BY 等均以字段保存，等待 Renderer 拼接文本。
     """
 
+    # 用于计划阅读和 SQL 中的说明注释，帮助把最终 SQL 片段追溯回数据流节点。
     _description: str
+    # 本层对外提供的列及别名；外层子查询只能通过这些别名继续引用值。
     select_columns: Tuple[SqlSelectColumn, ...]
+    # 本层计算的左侧输入；若是子查询，Renderer 先递归渲染它。
     from_source: SqlPlanNode
+    # select_columns、JOIN 条件与其他表达式引用左侧列时采用的别名。
     from_source_alias: str
+    # 共享分支生成的 WITH 定义；主查询及 JOIN 可按别名多次读取它们。
     cte_sources: Tuple[SqlCteNode, ...]
+    # 各右侧分支的来源、类型和 ON 条件；Renderer 按序接在 FROM 之后。
     join_descs: Tuple[SqlJoinDescription, ...]
+    # 决定聚合行粒度；合并指标分支后也用它对共同维度重新分组。
     group_bys: Tuple[SqlSelectColumn, ...]
+    # 用户请求的结果排序，渲染在聚合完成之后，不改变指标计算粒度。
     order_bys: Tuple[SqlOrderByDescription, ...]
+    # 当前层执行的过滤表达式；它筛选进入本层 GROUP BY 的输入行。
     where: Optional[SqlExpressionNode]
+    # 最终可见行数上限；Renderer 在本层其他子句之后输出它。
     limit: Optional[int]
+    # 要求本层去重；与 GROUP BY 的聚合粒度含义不同。
     distinct: bool
 
     @staticmethod

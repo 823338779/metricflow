@@ -47,6 +47,8 @@ class MetricEvaluationPlan(MetricFlowGraph[MetricQueryNode, MetricQueryDependenc
 
     Alternative name might be `MetricQueryPlan` or `MetricQueryGraph`, but `MetricQuery` might be confused with the
     overall plan for an MF query.
+
+    这是“指标依赖图”：描述每个指标要依赖哪些指标，与后面的 DataflowPlan 层次不同。
     """
 
     MAX_METRIC_DEFINITION_RECURSION_DEPTH = 100
@@ -108,11 +110,17 @@ class MetricEvaluationPlan(MetricFlowGraph[MetricQueryNode, MetricQueryDependenc
         return self.edges_with_head_node(source_node)
 
     def source_nodes(self, node: MetricQueryNode) -> OrderedSet[MetricQueryNode]:
-        """Return the source nodes for the given node."""
+        """Return the source nodes for the given node.
+
+        返回当前节点依赖的输入节点；例如 ratio 节点依赖两个简单指标节点。
+        """
         return self.successors(node)
 
     def target_nodes(self, node: MetricQueryNode) -> OrderedSet[MetricQueryNode]:
-        """Return all nodes that specify the given node as a source."""
+        """Return all nodes that specify the given node as a source.
+
+        返回使用当前节点输出的下游节点，方向与 source_nodes() 相反。
+        """
         return self.predecessors(node)
 
     def nodes_in_dfs_order(self) -> OrderedSet[MetricQueryNode]:

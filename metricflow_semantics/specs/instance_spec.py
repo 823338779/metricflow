@@ -128,7 +128,12 @@ class LinkableInstanceSpec(InstanceSpec, ABC):
 
     @property
     def dunder_name(self) -> str:
-        """Return the qualified name of this spec. e.g. "user_id__country"."""
+        """Return the qualified name of this spec. e.g. "user_id__country".
+
+        双下划线名称按实体关联路径和元素名拼接，如 listing__country_latest；
+        它表示语义项的来源路径，不是源表物理列名，也不受输出列 alias 影响。
+        时间维度会在子类中进一步附上粒度，如 metric_time__day。
+        """
         return StructuredLinkableSpecName(
             entity_link_names=tuple(x.element_name for x in self.entity_links), element_name=self.element_name
         ).dunder_name

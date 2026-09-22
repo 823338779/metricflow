@@ -19,8 +19,9 @@ if typing.TYPE_CHECKING:
 
 @dataclass(frozen=True, eq=False)
 class SqlTableNode(SqlPlanNode):
-    """An SQL table that can go in the FROM clause or the JOIN clause."""
+    """FROM/JOIN 中引用的物理表；无 schema 时也可表示已命名的 CTE。"""
 
+    # 有 schema 时渲染为物理表引用；无 schema 且名称匹配 WITH 定义时，代表 CTE 引用。
     sql_table: SqlTable
 
     @staticmethod

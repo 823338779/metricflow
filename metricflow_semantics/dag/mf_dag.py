@@ -64,8 +64,11 @@ class DagNode(MetricFlowPrettyFormattable, Generic[DagNodeT], ABC):
     Since there should only be a single instance of a node with a given ID, `eq` can be set to false so that equality
     operations can be done without comparing the fields. Comparing the fields can be a slow process since the
     `parent_nodes` field is recursive.
+
+    DataflowPlanNode 和 SqlPlanNode 都继承此类；parent_nodes 表示当前节点所依赖的输入。
     """
 
+    # 上游输入节点。ComputeMetricsNode 通常只有一个，CombineAggregatedOutputsNode 至少有两个。
     parent_nodes: Tuple[DagNodeT, ...]
 
     def __post_init__(self) -> None:  # noqa: D105
@@ -74,6 +77,8 @@ class DagNode(MetricFlowPrettyFormattable, Generic[DagNodeT], ABC):
     @property
     def node_id(self) -> NodeId:
         """ID for uniquely identifying a given node.
+
+        调试计划图时用于识别节点；与指标名称或 SQL 别名不是一回事。
 
         Ideally, this field would have a default value. However, setting a default field in this class means that all
         subclasses would have to have default values for all the fields as default fields must come at the end.

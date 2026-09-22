@@ -56,22 +56,30 @@ class JoinLinkableInstancesRecipe:
     node_to_join contains the linkable instances that are needed - it should be filtered so that the output data set of
     that node only includes the entity instance for the join and the instances associated with
     satisfiable_linkable_specs.
+
+    源节点缺少查询维度时，用此对象描述从哪个节点、按什么键补齐维度。
     """
 
+    # 被评估为可提供缺失维度的右侧分支；转 JoinDescription 时会先用 SelectorNode 保留必要列。
     node_to_join: DataflowPlanNode
-    # The entity to join "node_to_join" on. Only nullable if using CROSS JOIN.
+    # 左右分支可对齐的实体；下游把它解析为 ON 列，缺失时只能走允许的 CROSS JOIN。
     join_on_entity: Optional[EntityReference]
     # The linkable instances from the query that can be satisfied if we join this node. Note that this is different from
     # the linkable specs in the node that can help to satisfy the query. e.g. "user_id__country" might be one of the
     # "satisfiable_linkable_specs", but "country" is the linkable spec in the node.
+    # 关联后可满足的“查询侧”Spec，可能带实体路径（如 user__country）；
+    # 转右侧 SelectorNode 前会去掉首段实体链接，找到右侧实际的 country 列。
     satisfiable_linkable_specs: List[LinkableInstanceSpec]
-    # Join type to use when joining nodes
+    # 决定缺失维度如何并入事实分支；影响未匹配事实行是否保留，和指标结果合并的 JOIN 无关。
     join_type: SqlJoinType
 
     # The partitions to join on, if there are matching partitions between the left_node and node_to_join.
+    # 在实体键之外限制两边所属分区，避免一个实体跨分区匹配造成重复行。
     join_on_partition_dimensions: Tuple[PartitionDimensionJoinDescription, ...]
+    # 时间分区匹配条件，转 JoinDescription 后成为 SQL ON 的一部分。
     join_on_partition_time_dimensions: Tuple[PartitionTimeDimensionJoinDescription, ...]
 
+    # 缓慢变化维度等场景要求的有效时间窗口条件。
     validity_window: Optional[ValidityWindowJoinDescription] = None
 
     def __post_init__(self) -> None:  # noqa: D105
@@ -87,6 +95,7 @@ class JoinLinkableInstancesRecipe:
         Here, we figure out which instance specs to keep from this node in order to join to it and render its
         satisfiable linkable specs, e.g. if the node is used to satisfy "user_id__country", the node must have the
         entity "user_id" and the "country" dimension so that it can be joined to the source node.
+        此处才把评估用的 recipe 转成实际建图所需的右侧选列与 JOIN 描述。
         """
         include_specs: List[LinkableInstanceSpec] = []
         assert all(
@@ -142,11 +151,17 @@ class LinkableInstanceSatisfiabilityEvaluation:
     Includes whether the node contains the linkable instances that we need (local_linkable_specs), or if it can have
     them joined in (joinable_linkable_specs). Linkable instances that can't be satisfied either locally or via joins are
     listed in unjoinable_linkable_specs.
+
+    用于判断某个候选源节点能否提供查询要求的全部维度，供 Builder 选择 JOIN 最少的方案。
     """
 
+    # 无需额外 JOIN 就能提供的项；保留在左侧源即可满足相应查询分组。
     local_linkable_specs: Tuple[LinkableInstanceSpec, ...]
+    # 缺失但有可行关联路径的项；对应的 join_recipes 会告诉 Builder 如何补齐。
     joinable_linkable_specs: Tuple[LinkableInstanceSpec, ...]
+    # 每个右侧来源及其实体、分区、有效期条件；Builder 将其变为实际 JOIN 数据流节点。
     join_recipes: Tuple[JoinLinkableInstancesRecipe, ...]
+    # 仍不可满足的请求项；非空就淘汰这个候选源，而不是生成缺列的 SQL。
     unjoinable_linkable_specs: Tuple[LinkableInstanceSpec, ...]
 
 
@@ -164,6 +179,8 @@ class NodeEvaluatorForLinkableInstances:
     should be that we know: "is_instant" is available locally (i.e. in the same node), and if we join another node
     (on the right side of the join) containing "listing_id" and "country" by "listing_id", we can get
     "listing_id__country".
+
+    它只评估可用性和 JOIN 方案，不直接创建 SQL JOIN。
 
     """
 
@@ -184,11 +201,16 @@ class NodeEvaluatorForLinkableInstances:
             time_spine_node: If nodes_available_for_joins contains a time spine node, it should be identical to this
             one as there is logic to check for equality.
         """
+        # 语义模型的实体关系、分区配置等关联元数据。
         self._semantic_model_lookup = semantic_model_lookup
+        # 可作为维度来源的候选数据流节点。
         self._nodes_available_for_joins = nodes_available_for_joins
+        # 预览节点输出的 InstanceSet，判断哪些维度已可用。
         self._node_data_set_resolver = node_data_set_resolver
+        # 生成分区关联条件与判断实体关联合法性。
         self._partition_resolver = PartitionJoinResolver(self._semantic_model_lookup)
         self._join_evaluator = SemanticModelJoinEvaluator(self._semantic_model_lookup)
+        # 提供 metric_time 的时间脊节点。
         self._time_spine_metric_time_nodes = time_spine_metric_time_nodes
 
     def _find_joinable_candidate_nodes_that_can_satisfy_linkable_specs(
@@ -200,6 +222,8 @@ class NodeEvaluatorForLinkableInstances:
         """Get nodes that can be joined to get 1 or more of the "needed_linkable_specs".
 
         The returned list is ordered by the number of "needed_linkable_specs" that it can satisfy.
+        对每个右侧节点尝试共享实体连接；候选还会携带分区和有效期条件，
+        供后续生成 ON 条件。时间脊的 metric_time 是允许 CROSS JOIN 的特例。
         """
         candidates_for_join: List[JoinLinkableInstancesRecipe] = []
         left_node_spec_set = left_node_instance_set.spec_set
@@ -281,6 +305,7 @@ class NodeEvaluatorForLinkableInstances:
                     )
                     or entity_spec_matches_aggregated_specs
                 ):
+                    # 同名实体不代表语义上允许连接；聚合到该实体粒度的右侧节点另行放行。
                     continue
 
                 entity_reference_in_node = entity_spec_in_right_node.reference
@@ -320,6 +345,7 @@ class NodeEvaluatorForLinkableInstances:
                 # If this node can satisfy some linkable specs, it could be useful to join on, so add it to the
                 # candidate list.
                 if len(satisfiable_linkable_specs) > 0:
+                    # 仅当此实体连接能补到至少一个请求项时，才保留右侧方案。
                     join_on_partition_dimensions = self._partition_resolver.resolve_partition_dimension_joins(
                         left_node_spec_set=left_node_spec_set,
                         node_to_join_spec_set=data_set_in_right_node.instance_set.spec_set,
@@ -362,6 +388,7 @@ class NodeEvaluatorForLinkableInstances:
         containing some needed linkable instances to the "left_node". This method will then remove the satisfied
         linkable instances from the candidate recipes, and if a candidate recipe doesn't have any linkable instances
         that can help satisfy the query, it is removed.
+        每选中一个右侧节点后重算剩余候选的收益，供下一轮贪心选择。
         """
         updated_candidate_data_sets: List[JoinLinkableInstancesRecipe] = []
         for candidate_for_join in candidates_for_join:
@@ -399,7 +426,8 @@ class NodeEvaluatorForLinkableInstances:
 
         * Can all "required_linkable_specs" be retrieved from the left_node? (These would be considered "local").
         * If not, can they be retrieved by joining an available node though a common entity?
-        * If so, return all possible ways (by joining different nodes) that can be done.
+        * If so, return a join recipe for obtaining the remaining specs.
+        实际实现按单次可补齐的项数贪心选择右侧节点，不穷举所有 JOIN 组合。
         """
         candidate_instance_set: InstanceSet = self._node_data_set_resolver.get_output_data_set(left_node).instance_set
         candidate_spec_set = candidate_instance_set.spec_set
@@ -436,6 +464,7 @@ class NodeEvaluatorForLinkableInstances:
             elif is_unjoinable:
                 unjoinable_linkable_specs.append(required_linkable_spec)
             else:
+                # 有首段实体键只代表“可能可 JOIN”，还需在右侧候选里验证实际连接。
                 possibly_joinable_linkable_specs.append(required_linkable_spec)
 
         candidates_for_join = self._find_joinable_candidate_nodes_that_can_satisfy_linkable_specs(
@@ -467,7 +496,7 @@ class NodeEvaluatorForLinkableInstances:
                 unjoinable_linkable_specs.extend(possibly_joinable_linkable_specs)
                 break
 
-            # Join the best candidate to realize the linkable specs
+            # 候选按可补齐项数降序排列，本轮先取覆盖最多的一个。
             next_candidate = candidates_for_join.pop(0)
             logger.debug(LazyFormat(lambda: f"The next candidate node to be joined is:\n{mf_pformat(next_candidate)}"))
             join_candidates.append(next_candidate)
@@ -488,6 +517,7 @@ class NodeEvaluatorForLinkableInstances:
 
         logger.debug(LazyFormat(lambda: "Done evaluating possible joins"))
         return LinkableInstanceSatisfiabilityEvaluation(
+            # 外层 Builder 用 unjoinable 淘汰起点，再按 join_recipes 数量比较方案。
             local_linkable_specs=tuple(local_linkable_specs),
             joinable_linkable_specs=tuple(
                 itertools.chain.from_iterable([x.satisfiable_linkable_specs for x in join_candidates])

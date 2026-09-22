@@ -1,0 +1,20 @@
+semantic_model:
+  name: merchandise_index
+  node_relation:
+    schema_name: $source_schema
+    alias: dim_products
+  defaults:
+    agg_time_dimension: cataloged_on
+  dimensions:
+    - name: cataloged_on
+      type: time
+      expr: created_at
+      type_params:
+        time_granularity: day
+    - name: merchandise_class
+      type: categorical
+      expr: category
+  entities:
+    - name: sku
+      type: primary
+      expr: product_id

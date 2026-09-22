@@ -82,8 +82,12 @@ class InstanceAliasMapping(Mergeable, SerializableDataclass):
 
 @fast_frozen_dataclass()
 class NullFillValueMapping(Mergeable, MetricFlowPrettyFormattable, SerializableDataclass):
-    """Stores the mapping for which instances should have null values set to a configured value."""
+    """Stores the mapping for which instances should have null values set to a configured value.
 
+    聚合输入名到 fill_nulls_with 的映射；优化器合并分支时也检查映射是否冲突。
+    """
+
+    # 使用不可变元组保存映射，以便比较、缓存和合并；None 表示不填充。
     _element_name_and_null_fill_value_items: Tuple[Tuple[str, Optional[int]], ...]
 
     @staticmethod

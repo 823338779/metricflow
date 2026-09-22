@@ -22,10 +22,18 @@ class SelectorNode(DataflowPlanNode):
         include_specs: The specs for the elements that it should pass.
         replace_description: Replace the default description with this.
         distinct: If you only want the distinct values for the selected specs.
+
+    在聚合前常出现两次：先保留过滤所需列，过滤后再只保留聚合所需列。
+    parent_node 提供可选的 Instance；include_specs 指定其中哪些语义项继续传给下游。
+    Spec 是语义描述，不是源表的物理列名；实际选列由父节点的 InstanceSet 和列关联决定。
     """
 
+    # 核心配置：限定后续节点可见的语义列；右侧 JOIN 来源通常只保留连接键和目标维度，
+    # 过早删掉实体键会使后续 ON 无法生成。处理节点时会检查这些 Spec 是否都存在。
     include_specs: InstanceSpecSet
+    # 只影响计划显示文字，不改变选列逻辑。
     replace_description: Optional[str] = None
+    # 输出所选列的不同组合；用于只查维度值等场景，改变结果行数而非单纯列展示。
     distinct: bool = False
 
     def __post_init__(self) -> None:  # noqa: D105

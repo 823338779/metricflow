@@ -14,7 +14,11 @@ from metricflow.dataflow.dataflow_plan_visitor import DataflowPlanNodeVisitor
 
 @dataclass(frozen=True, eq=False)
 class CombineAggregatedOutputsNode(DataflowPlanNode):
-    """Combines metrics from different nodes into a single output."""
+    """Combines metrics from different nodes into a single output.
+
+    parent_nodes 是至少两个已聚合的指标分支；这里只表达合并意图，尚未选择 SQL JOIN 类型。
+    优化器可把兼容的分支合成一个节点；保留下来时 SQL 转换器按共同分组项连接。
+    """
 
     def __post_init__(self) -> None:  # noqa: D105
         super().__post_init__()

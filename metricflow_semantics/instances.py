@@ -41,13 +41,16 @@ class MdoInstance(ABC, Generic[SpecT]):
     An instance is different from the metric definition object in that it correlates to columns in a data set and can be
     in different states. e.g. simple-metric-input instance can be aggregated, or a time dimension can be at a different
     granularity.
+
+    Spec 表示“想要哪个语义项”，Instance 进一步记录它在当前数据集对应的 SQL 列。
     """
 
-    # The columns associated with this instance.
+    # 当前子查询中承载该语义项的真实列名；JOIN ON、外层 SELECT 与列裁剪靠它找到列。
+    # 同一个 Spec 经重命名或多层子查询后，associated_columns 可能随层次改变。
     # TODO: if poss, remove this and instead add a method that resolves this from the spec + column association resolver
     # (ensure we're using consistent logic everywhere so this bug doesn't happen again)
     associated_columns: Tuple[ColumnAssociation, ...]
-    # The spec that describes this instance.
+    # 列所代表的语义身份；即使 SQL 别名改变，仍可判断它是哪个指标、维度或实体。
     spec: SpecT
 
     @property
@@ -308,14 +311,23 @@ class InstanceSet(SerializableDataclass):
     """A set that includes all instance types.
 
     Generally used to help represent that data that is flowing between nodes in the metric dataflow plan.
+
+    每个数据流节点的输出列清单；SQL 转换时按这些 Instance 决定选列和列名。
     """
 
+    # 源侧逐行输入值，例如 __bookings；聚合节点消费它们，不能当最终指标直接输出。
     simple_metric_input_instances: Tuple[SimpleMetricInputInstance, ...] = ()
+    # 当前结果实际具备的维度列；JOIN 规划与 GROUP BY 构造会读取其 Spec 和列关联。
     dimension_instances: Tuple[DimensionInstance, ...] = ()
+    # 已映射到当前 SQL 列的时间粒度；时间过滤、时间脊 JOIN 和 GROUP BY 都需区分粒度。
     time_dimension_instances: Tuple[TimeDimensionInstance, ...] = ()
+    # 可作为输出或跨模型 JOIN 键的实体列；右侧维度不能直接取得时要靠它对齐来源。
     entity_instances: Tuple[EntityInstance, ...] = ()
+    # 指标值被当作分组项时使用；普通 MetricInstance 不表达这种可关联语义。
     group_by_metric_instances: Tuple[GroupByMetricInstance, ...] = ()
+    # 已完成表达式计算的指标列；合并分支时据此收集各指标并生成最终 SELECT。
     metric_instances: Tuple[MetricInstance, ...] = ()
+    # 节点间传递内部信息的列契约；不代表用户请求的业务指标。
     metadata_instances: Tuple[MetadataInstance, ...] = ()
 
     def transform(self, transform_function: InstanceSetTransform[TransformOutputT]) -> TransformOutputT:  # noqa: D102

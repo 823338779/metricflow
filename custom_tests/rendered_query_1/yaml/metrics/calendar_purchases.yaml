@@ -1,0 +1,10 @@
+metric:
+  name: calendar_purchases
+  type: simple
+  type_params:
+    expr: "1"
+    metric_aggregation_params:
+      semantic_model: checkout_activity
+      agg: sum
+    join_to_timespine: true
+    fill_nulls_with: 0
