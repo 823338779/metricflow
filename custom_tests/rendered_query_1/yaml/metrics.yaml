@@ -1,0 +1,20 @@
+metric:
+  name: bookings
+  type: simple
+  type_params:
+    measure: bookings
+---
+metric:
+  name: listings
+  type: simple
+  type_params:
+    measure: listings
+---
+metric:
+  name: bookings_per_listing
+  type: ratio
+  type_params:
+    numerator:
+      name: bookings
+    denominator:
+      name: listings
