@@ -16,9 +16,11 @@ from metricflow.sql.sql_table_node import SqlTableNode
 
 @dataclass(frozen=True, eq=False)
 class SqlCteNode(SqlPlanNode):
-    """Represents a single common table expression."""
+    """表示一项 WITH 公共表表达式，供主查询按别名复用。"""
 
+    # 共享分支的实际计算；Renderer 将它写进 WITH，外层只按别名引用，避免重复展开。
     select_statement: SqlPlanNode
+    # 外层 SqlTableNode 使用同一个名字，必须与 WITH 定义一致才能读到这些列。
     cte_alias: str
 
     def __post_init__(self) -> None:  # noqa: D105

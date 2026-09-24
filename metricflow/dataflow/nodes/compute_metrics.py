@@ -27,11 +27,17 @@ class ComputeMetricsNode(DataflowPlanNode):
         passthrough_metric_specs: The specs that should be passed unchanged from the input to the output.
         output_group_by_metric_instances: If set, output computed metrics as `GroupByMetricInstances` instead of
         `MetricInstances`. This is useful for building the dataflow plan for a group-by source node.
+
+    接在聚合节点之后，将简单指标输入换算为最终指标列；派生指标也可使用此节点。
     """
 
+    # 需要在此层生成 SQL 表达式并新增输出列的指标；简单分支通常只含一个，派生分支可消费父指标。
     computed_metric_specs: Tuple[MetricSpec, ...]
+    # 不参与本层表达式计算但下游仍需要的父指标；SQL Visitor 据此保留列而非裁剪。
     passthrough_metric_specs: Tuple[MetricSpec, ...]
+    # 改变输出实例类型：普通 MetricInstance 或可作为分组来源的 GroupByMetricInstance。
     output_group_by_metric_instances: bool
+    # 记录父结果的分组粒度，供同源分支合并检查是否能在不改变结果的情况下共用聚合。
     _aggregated_to_elements: Tuple[LinkableInstanceSpec, ...]
 
     def __post_init__(self) -> None:  # noqa: D105

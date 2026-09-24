@@ -144,7 +144,10 @@ logger = logging.getLogger(__name__)
 
 
 class DataflowPlanBuilder:
-    """Builds a dataflow plan to satisfy a given query."""
+    """Builds a dataflow plan to satisfy a given query.
+
+    按 QuerySpec 展开指标依赖、选源与关联维度，最后生成可供 SQL 转换的操作图。
+    """
 
     def __init__(  # noqa: D107
         self,
@@ -155,18 +158,30 @@ class DataflowPlanBuilder:
         source_node_builder: SourceNodeBuilder,
         dataflow_plan_builder_cache: Optional[DataflowPlanBuilderCache] = None,
     ) -> None:
+        # 选源与实体路径评估需要语义模型之间的关系，不能只看物理表名。
         self._semantic_model_lookup = semantic_manifest_lookup.semantic_model_lookup
+        # 将 MetricSpec 指向的名称解析为指标定义，确定类型、依赖和聚合时间规则。
         self._metric_lookup = semantic_manifest_lookup.metric_lookup
+        # 将简单指标名映射到具体输入表达式/聚合规则，生成 SimpleMetricRecipe。
         self._manifest_object_lookup = semantic_manifest_lookup.manifest_object_lookup
 
+        # 逻辑 metric_time 的统一引用；把不同源的聚合时间列映射到用户可查询的同一时间维度。
         self._metric_time_dimension_reference = DataSet.metric_time_dimension_reference()
+        # 已建好的可选来源。选源器从中挑能提供指标输入的左侧节点和补维度的右侧节点。
         self._source_node_set = source_node_set
+        # 保证 Builder 创建的语义 Spec 与后续 SQL Visitor 使用同一列命名约定。
         self._column_association_resolver = column_association_resolver
+        # 预览候选数据流节点的输出 InstanceSet，判断其能否提供需要的指标输入、维度和 JOIN 键。
         self._node_data_set_resolver = node_output_resolver
+        # 查询把指标作为分组来源时，为这种特殊来源构建额外源节点。
         self._source_node_builder = source_node_builder
+        # 为累计窗口、时间偏移扩展源读取范围；避免只读用户输出窗口而少算历史数据。
         self._time_period_adjuster = DateutilTimePeriodAdjuster()
+        # 复用成本高的源/JOIN 规划和指标分支；键包含粒度、过滤与优化上下文。
         self._cache = dataflow_plan_builder_cache or DataflowPlanBuilderCache()
+        # 供日志/调试展示指标依赖图的格式化器。
         self._metric_evaluation_plan_formatter = MetricEvaluationPlanTableFormatter()
+        # 集中处理指标定义中的查询规则，供各指标类型构建分支时复用。
         self._query_helper = MetricQueryHelper(metric_lookup=semantic_manifest_lookup.metric_lookup)
 
     def build_plan(
@@ -206,6 +221,7 @@ class DataflowPlanBuilder:
 
         plan_id = DagId.from_id_prefix(StaticIdPrefix.DATAFLOW_PLAN_PREFIX)
         plan = DataflowPlan(sink_nodes=[sink_node], plan_id=plan_id)
+        # SOURCE_SCAN 等优化可能把多个指标分支合为一次源扫描。
         optimized_plan = self._optimize_plan(plan=plan, option_set=option_set)
         logger.debug(LazyFormat("Generated final plan", optimized_plan=lambda: optimized_plan.structure_text()))
         return optimized_plan
@@ -236,6 +252,7 @@ class DataflowPlanBuilder:
             custom_grain_names=self._semantic_model_lookup.custom_granularity_names,
         )
 
+        # 用户请求的过滤条件，转换成可放入各指标查询元素中的过滤 Spec。
         query_level_filter_specs = tuple(
             filter_spec_factory.create_from_where_filter_intersection(
                 filter_location=WhereFilterLocation.for_query(
@@ -245,12 +262,14 @@ class DataflowPlanBuilder:
             )
         )
 
+        # 记录过滤下推能力和时间范围；后续构建数据流节点时持续传递。
         predicate_pushdown_state = PredicatePushdownState.create(
             time_range_constraint=query_spec.time_range_constraint,
             where_filter_specs=(),
             pushdown_enabled_types=frozenset({PredicateInputType.TIME_RANGE_CONSTRAINT}),
         )
 
+        # 为本次计划创建带查询级过滤条件的指标引用，不修改用户原始的 QuerySpec。
         metric_specs = tuple(
             MetricSpec.create(
                 element_name=metric_spec.element_name,
@@ -276,6 +295,7 @@ class DataflowPlanBuilder:
                     column_association_resolver=self._column_association_resolver,
                 )
 
+            # 展开 ratio/derived 等指标依赖，生成 MetricQueryNode 与依赖边组成的图。
             me_plan_override = me_planner.build_plan(
                 metric_specs=metric_specs,
                 group_by_item_specs=group_by_item_specs_without_aliases.as_tuple,
@@ -301,6 +321,7 @@ class DataflowPlanBuilder:
         # then use those converted nodes as inputs to build the dataflow that corresponds to A.
         top_level_query_node = me_plan_override.node_with_label(TopLevelQueryLabel.get_instance())
         # On visit, the metric evaluation plan node is mapped to a dataflow branch and stored here.
+        # 键是指标查询节点，值是该节点已转换出的数据流分支；避免重复转换依赖节点。
         query_node_to_dataflow_node: dict[MetricQueryNode, DataflowPlanNode] = {}
 
         # Handling of `output_group_by_metric_instances` is currently odd because the flag only applies to the direct
@@ -332,11 +353,13 @@ class DataflowPlanBuilder:
                 raise MetricFlowInternalError(
                     LazyFormat("DFS traversal should have yielded non-empty paths", path=path)
                 )
+            # DFS 当前处理的指标查询节点；其依赖会先被转换。
             current_query_node = path.nodes[-1]
 
             if current_query_node in query_node_to_dataflow_node:
                 continue
 
+            # 当前节点的依赖对应的数据流分支，作为 Visitor 构建此节点时的输入。
             input_dataflow_plan_nodes: list[DataflowPlanNode] = []
             for source_query_node in me_plan_override.source_nodes(current_query_node):
                 input_dataflow_plan_node = query_node_to_dataflow_node.get(source_query_node)
@@ -351,6 +374,7 @@ class DataflowPlanBuilder:
                     )
                 input_dataflow_plan_nodes.append(input_dataflow_plan_node)
 
+            # 根据节点类型分派到对应 visit_* 方法，生成这个节点的数据流分支。
             dataflow_plan_node = current_query_node.accept(
                 DataflowPlanBuilder._EvaluationNodeToDataflowNodeConverter(
                     dataflow_plan_builder=self,
@@ -764,12 +788,17 @@ class DataflowPlanBuilder:
         predicate_pushdown_state: PredicatePushdownState,
         option_set: DataflowPlanOptionSet,
     ) -> DataflowPlanNode:
-        """Builds a node to compute a metric that is not defined from other metrics."""
+        """Builds a node to compute a metric that is not defined from other metrics.
+
+        单个简单指标分支：MetricSpec -> SimpleMetricRecipe -> 聚合输入节点 -> ComputeMetricsNode。
+        """
+        # MetricSpec 是查询引用；Metric 是 manifest 中的完整定义。
         metric_reference = metric_spec.reference
         metric = self._metric_lookup.get_metric(metric_reference)
         if metric.type is not MetricType.SIMPLE:
             raise RuntimeError(LazyFormat("This method should have been called with a simple metric", metric=metric))
 
+        # 从定义取出聚合函数、表达式和时间列，合并本次查询的分组与过滤要求。
         simple_metric_recipe = self._build_simple_metric_recipe(
             simple_metric_input=self._manifest_object_lookup.simple_metric_name_to_input[metric.name],
             queried_linkable_specs=queried_linkable_specs,
@@ -780,12 +809,14 @@ class DataflowPlanBuilder:
             additional_filter_specs=metric_spec.where_filter_specs,
         )
 
+        # 选择源节点、关联缺少的维度、应用过滤，然后按分组项聚合简单指标输入。
         aggregated_simple_metric_input_node = self.build_aggregated_simple_metric_input(
             simple_metric_recipe=simple_metric_recipe,
             predicate_pushdown_state=predicate_pushdown_state,
             option_set=option_set,
         )
 
+        # 把聚合后的输入值转为最终 MetricSpec 对应的指标列。
         return self.build_computed_metrics_node(
             metric_spec=metric_spec,
             aggregated_node=aggregated_simple_metric_input_node,
@@ -1080,10 +1111,12 @@ class DataflowPlanBuilder:
     def _find_source_node_recipe_non_cached(
         self, find_source_node_recipe_input: FindSourceNodeRecipeInput
     ) -> Optional[SourceNodeRecipe]:
+        """选择可提供指标输入和分组项的源节点，并尽量减少所需 JOIN。"""
         linkable_spec_set = find_source_node_recipe_input.linkable_spec_set
         predicate_pushdown_state = find_source_node_recipe_input.predicate_pushdown_state
         simple_metric_input_specs = find_source_node_recipe_input.simple_metric_input_specs
 
+        # 左侧候选负责提供指标输入；右侧候选负责补齐左侧缺少的分组维度。
         candidate_nodes_for_left_side_of_join: List[DataflowPlanNode] = []
         candidate_nodes_for_right_side_of_join: List[DataflowPlanNode] = []
 
@@ -1203,6 +1236,7 @@ class DataflowPlanBuilder:
 
         logger.debug(LazyFormat(lambda: f"Processing nodes took: {time.perf_counter()-start_time:.2f}s"))
 
+        # 对每个左侧候选检查：维度本地已有、可通过 JOIN 取得，还是无法取得。
         node_evaluator = NodeEvaluatorForLinkableInstances(
             semantic_model_lookup=self._semantic_model_lookup,
             nodes_available_for_joins=self._sort_by_suitability(candidate_nodes_for_right_side_of_join),
@@ -1312,6 +1346,7 @@ class DataflowPlanBuilder:
                 for x in evaluation.join_recipes
                 for y in x.join_on_partition_time_dimensions
             )
+            # 把选中的起点、需保留的 JOIN 键和关联方案交给后续聚合构建步骤。
             return SourceNodeRecipe(
                 source_node=node_with_lowest_cost_plan,
                 required_local_linkable_specs=LinkableSpecSet.create_from_specs(
@@ -1408,6 +1443,8 @@ class DataflowPlanBuilder:
         "child" refers to the derived metric that uses the metric specified by metric_reference in the definition.
         descendant_filter_specs includes all filter specs required to compute the metric in the query. This includes the
         filters in the query and any filter in the definition of metrics in between.
+
+        本方法只整理计算步骤，不执行聚合或生成 SQL；时间偏移和时间脊会改变过滤位置。
         """
         queried_agg_time_dimension_specs = FrozenOrderedSet(queried_linkable_specs.time_dimension_specs).intersection(
             self._metric_lookup.get_aggregation_time_dimension_specs(
@@ -1659,6 +1696,8 @@ class DataflowPlanBuilder:
         This might be a node representing a single aggregation over one semantic model, or a node representing
         a composite set of aggregations originating from multiple semantic models, and joined into a single
         aggregated set.
+
+        普通简单指标走下方 _build_aggregated_simple_metric_input()，特殊时间配置可增加时间脊步骤。
         """
         return self._build_aggregated_simple_metric_input(
             simple_metric_recipe=simple_metric_recipe,
@@ -1895,6 +1934,7 @@ class DataflowPlanBuilder:
             else None
         )
 
+        # 此处仍是聚合前的简单指标输入（如原表上的 expr），不是最终 MetricSpec。
         simple_metric_input = simple_metric_recipe.simple_metric_input
         simple_metric_input_spec = SimpleMetricInputSpec(
             element_name=simple_metric_input.name,
@@ -1932,6 +1972,7 @@ class DataflowPlanBuilder:
                 LazyFormat(lambda: f"Adjusted time range constraint to: {cumulative_metric_adjusted_time_constraint}")
             )
 
+        # 除用户选择的维度外，还要带上过滤与非可加计算依赖的维度。
         required_linkable_specs = self.__get_required_linkable_specs(
             queried_linkable_specs=queried_linkable_specs,
             filter_specs=simple_metric_recipe.combined_filter_specs,
@@ -1976,6 +2017,7 @@ class DataflowPlanBuilder:
                 )
 
             with ExecutionTimer() as execution_timer:
+                # 找能提供指标输入的源节点，并规划获取其他维度所需的关联。
                 source_node_recipe = self._find_source_node_recipe(
                     FindSourceNodeRecipeInput(
                         simple_metric_input_specs=spec_properties.simple_metric_input_specs,
@@ -2019,6 +2061,7 @@ class DataflowPlanBuilder:
 
         # If a cumulative metric is queried with metric_time / agg_time_dimension, join over time range.
         # Otherwise, the simple-metric input will be aggregated over all time.
+        # 数据流从源节点出发，先做必要的 JOIN / 过滤 / 列选择，再聚合。
         unaggregated_simple_metric_input_node: DataflowPlanNode = source_node_recipe.source_node
         if cumulative and base_required_agg_time_dimension_specs:
             unaggregated_simple_metric_input_node = JoinOverTimeRangeNode.create(
@@ -2074,6 +2117,7 @@ class DataflowPlanBuilder:
             queried_linkable_specs_for_semi_additive_join=queried_linkable_specs,
         )
 
+        # 这里得到按查询粒度聚合的简单指标输入；最终指标表达式在 ComputeMetricsNode 中计算。
         aggregate_node: DataflowPlanNode = AggregateSimpleMetricInputsNode.create(
             parent_node=unaggregated_simple_metric_input_node,
             null_fill_value_mapping=NullFillValueMapping.create_from_simple_metric_recipe(simple_metric_recipe),
@@ -2108,7 +2152,10 @@ class DataflowPlanBuilder:
         queried_linkable_specs_for_semi_additive_join: Optional[LinkableSpecSet] = None,
         distinct: bool = False,
     ) -> DataflowPlanNode:
-        """Adds standard pre-aggegation steps after building source node and before aggregation."""
+        """Adds standard pre-aggegation steps after building source node and before aggregation.
+
+        按顺序添加维度关联、列选择、WHERE 与时间范围约束；返回聚合节点的输入分支。
+        """
         output_node = source_node
         non_additive_dimension_spec = spec_properties.non_additive_dimension_spec if spec_properties else None
 
@@ -2378,7 +2425,7 @@ class DataflowPlanBuilder:
         return join_on_time_dimension_spec
 
     class _EvaluationNodeToDataflowNodeConverter(MetricQueryNodeVisitor[DataflowPlanNode]):
-        """Visitor that returns the appropriate dataflow branch for each metric evaluation node."""
+        """把指标求值 DAG 的各类节点转换为对应的数据流分支。"""
 
         def __init__(
             self,
@@ -2388,17 +2435,25 @@ class DataflowPlanBuilder:
             option_set: DataflowPlanOptionSet,
             simple_metric_node_cache: ResultCache[BuildAnyMetricOutputNodeInput, DataflowPlanNode],
         ) -> None:
+            # 交还给 Builder 处理选源、维度 JOIN、聚合与指标表达式；Visitor 负责按求值节点类型分派。
             self._dataflow_plan_builder = dataflow_plan_builder
+            # 把查询/指标定义里的 WHERE 语义项解析为可用于源选择和数据流过滤的 Spec。
             self._filter_spec_factory = filter_spec_factory
+            # 控制此分支的构建与优化策略；其中 optimizations 也进入缓存键，防止跨配置复用。
             self._option_set = option_set
+            # DFS 已转换好的依赖分支；派生指标消费其中的输入指标，顶层节点据此汇总最终结果。
             self._input_dataflow_plan_nodes = tuple(input_dataflow_plan_nodes)
+            # 同一查询中重复要求“同一指标 + 相同粒度/过滤”的分支时复用节点，避免重复建图。
             self._simple_metric_node_cache = simple_metric_node_cache
 
         @override
         def visit_simple_metrics_query_node(self, node: SimpleMetricsQueryNode) -> DataflowPlanNode:
+            """为节点内每个简单指标构建分支，并将多个结果合为一个数据流输出。"""
             simple_metric_nodes: list[DataflowPlanNode] = []
 
             for simple_metric_spec in node.output_metric_specs:
+                # output_metric_specs 是此求值节点承诺提供的指标；这里拆成单指标分支，
+                # 使每个分支都可独立选源/应用指标过滤，也让缓存按真实计算上下文复用。
                 build_node_input = BuildAnyMetricOutputNodeInput(
                     metric_query_descriptor=MetricQueryDescriptor.create(
                         computed_metric_specs=(simple_metric_spec,),
@@ -2425,6 +2480,8 @@ class DataflowPlanBuilder:
                     )
                 simple_metric_nodes.append(simple_metric_node)
 
+            # 多指标先保留各自聚合结果。Combine 记录“需要对齐输出”的意图；
+            # 优化器可先合并同源扫描，仍保留 Combine 时 SQL 转换器才按分组键决定 JOIN。
             if len(simple_metric_nodes) == 1:
                 return simple_metric_nodes[0]
 

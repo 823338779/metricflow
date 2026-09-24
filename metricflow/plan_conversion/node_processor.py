@@ -101,12 +101,20 @@ class PredicatePushdownState:
     The last will be updated as filters are applied via pushdown or by the original WhereFilterNode.
 
     Finally, the time_range_constraint property holds the time window for setting up a time range filter expression.
+
+    此对象沿指标分支传递，使构建器知道哪些过滤可提前作用在源节点上。
     """
 
+    # 用户请求的时间窗口；源选择与 ConstrainTimeRangeNode 会消费它。
+    # 累计指标可能先扩展读取范围，因此不能把它等同于最终结果的显示范围。
     time_range_constraint: Optional[TimeRangeConstraint]
     # TODO: Deduplicate where_filter_specs
+    # 所有待规划的 WHERE 条件；Builder 会逐项判断能否放在源侧，剩余条件保留到后续过滤节点。
     where_filter_specs: Tuple[WhereFilterSpec, ...]
+    # 已在某个上游节点落实的条件；继续构建派生分支时据此避免重复应用同一过滤。
     applied_where_filter_specs: FrozenOrderedSet[WhereFilterSpec]
+    # 安全性边界：例如累计指标的时间过滤过早执行会截断累计窗口，
+    # 因此构建器只对这里允许的条件类型尝试源侧过滤。
     pushdown_enabled_types: FrozenOrderedSet[PredicateInputType]
 
     @staticmethod

@@ -19,9 +19,13 @@ class WhereFilterNode(DataflowPlanNode):
     Attributes:
         filter_specs: Specifications for the WHERE clause to filter rows.
         always_apply: Indicator if the WHERE clause should always be applied.
+
+    可出现在聚合前，或在时间脊 JOIN 后重新应用延迟过滤。
     """
 
+    # 已决定放在此数据流位置执行的条件；SQL Visitor 根据父数据集列关联生成本层 WHERE。
     filter_specs: Sequence[WhereFilterSpec]
+    # 标记此过滤应始终应用；当前字段用于节点等价比较和计划展示。
     always_apply: bool
 
     def __post_init__(self) -> None:  # noqa: D105

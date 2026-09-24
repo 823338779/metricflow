@@ -25,8 +25,12 @@ class MetricTimeDimensionTransformNode(DataflowPlanNode):
 
     Attributes:
         aggregation_time_dimension_reference: The time dimension that simple-metric inputs in the input should be aggregated to.
+
+    例如把 YAML 中配置的 ds 作为此分支的 metric_time，并筛选使用该时间列的指标输入。
     """
 
+    # 从源模型的时间列（如 ds）生成统一 metric_time 实例；这样不同来源的指标
+    # 才能用相同时间 Spec 分组和在合并结果时对齐。
     aggregation_time_dimension_reference: TimeDimensionReference
 
     def __post_init__(self) -> None:  # noqa: D105

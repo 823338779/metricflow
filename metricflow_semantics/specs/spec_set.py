@@ -24,14 +24,24 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class InstanceSpecSet(Mergeable, SerializableDataclass):
-    """Consolidates all specs used in an instance set."""
+    """Consolidates all specs used in an instance set.
 
+    既包含可分组项，也包含指标及聚合前的简单指标输入；SelectorNode 用它决定保留哪些列。
+    """
+
+    # 已计算的指标列契约；SelectorNode 或 SQL 列裁剪用它判断哪些对外指标必须保留。
     metric_specs: Tuple[MetricSpec, ...] = ()
+    # 聚合前的 measure 输入列；AggregateSimpleMetricInputsNode 消费它们后才产生指标列。
     simple_metric_input_specs: Tuple[SimpleMetricInputSpec, ...] = ()
+    # 可输出或用于 GROUP BY 的普通维度；缺失时 Builder 检查是否可经实体路径 JOIN 取得。
     dimension_specs: Tuple[DimensionSpec, ...] = ()
+    # 既可能是用户要输出的实体，也可能是为跨模型 JOIN 临时保留的连接键。
     entity_specs: Tuple[EntitySpec, ...] = ()
+    # 时间粒度也是输出契约的一部分；SQL Visitor 用它选 DATE_TRUNC 和聚合分组列。
     time_dimension_specs: Tuple[TimeDimensionSpec, ...] = ()
+    # 将计算出的指标作为维度再查询时的列契约，与普通 metric_specs 不可混用。
     group_by_metric_specs: Tuple[GroupByMetricSpec, ...] = ()
+    # 传递内部计算所需的附加语义项；一般不会成为用户最终 SELECT 的指标或维度列。
     metadata_specs: Tuple[MetadataSpec, ...] = ()
 
     @override

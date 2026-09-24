@@ -62,6 +62,8 @@ class ComputeMetricsBranchCombinerResult:  # noqa: D101
 class ComputeMetricsBranchCombiner(DataflowPlanNodeVisitor[ComputeMetricsBranchCombinerResult]):
     """Combines branches where the leaf node is a ComputeMetricsNode.
 
+    沿两个分支逐层比较来源、选列、过滤及聚合规则；只有语义兼容才合为一个计算分支。
+
     This considers two branches, a left branch and a right branch. The left branch is supplied via the argument in the
     initializer while the right branch is supplied via .accept(). This then attempts to create a similar branch that is
     the superposition of the two branches. For this to be possible, the two branches must be of the same structure,
@@ -141,7 +143,10 @@ class ComputeMetricsBranchCombiner(DataflowPlanNodeVisitor[ComputeMetricsBranchC
             tuple[DataflowPlanNode, DataflowPlanNode], ComputeMetricsBranchCombinerResult
         ],
     ) -> None:
+        # 沿两条指标分支同步向上比较；结构与聚合语义兼容时才替换为共用节点。
+        # 右侧同层节点通过 accept(self) 进入对应 visit_* 方法。
         self._current_left_node: DataflowPlanNode = left_branch_node
+        # 相同节点对的合并可行性与合并结果可复用，避免共享 DAG 分支被重复比较。
         self._branch_combiner_cache = branch_combiner_cache
 
     def _log_visit_node_type(self, node: DataflowPlanNode) -> None:

@@ -120,7 +120,10 @@ class PostgresSqlExpressionRenderer(DefaultSqlExpressionRenderer):
 
 
 class PostgresSQLSqlPlanRenderer(DefaultSqlPlanRenderer):
-    """Plan renderer for the PostgreSQL engine."""
+    """Plan renderer for the PostgreSQL engine.
+
+    复用通用 SELECT 结构，表达式部分由 PostgresSqlExpressionRenderer 按 PostgreSQL 方言输出。
+    """
 
     EXPR_RENDERER = PostgresSqlExpressionRenderer()
 

@@ -66,6 +66,8 @@ class SourceScanOptimizer(
 ):
     """Reduces the number of scans (ReadSqlSourceNodes) in a dataflow plan.
 
+    将兼容的指标分支合并；若合并后只剩一个分支，就移除 CombineAggregatedOutputsNode。
+
     This attempts to reduce the number of scans by combining the parent nodes of CombineAggregatedOutputsNode via the
     ComputeMetricsBranchCombiner.
 
@@ -115,7 +117,10 @@ class SourceScanOptimizer(
     """
 
     def __init__(self) -> None:  # noqa: D107
+        # DAG 中共享上游只优化一次，并保留同一个优化后节点身份；
+        # 这也让后续 CTE 识别能看见真正共享的分支。
         self._node_to_result: Dict[DataflowPlanNode, OptimizeBranchResult] = {}
+        # 记住两条指标分支能否共用扫描/聚合，避免对同一节点对重复递归比较。
         self._branch_combiner_cache: ResultCache[
             tuple[DataflowPlanNode, DataflowPlanNode], ComputeMetricsBranchCombinerResult
         ] = ResultCache()

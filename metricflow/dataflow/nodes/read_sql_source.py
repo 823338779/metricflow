@@ -22,8 +22,12 @@ class ReadSqlSourceNode(DataflowPlanNode):
 
     Attributes:
         data_set: Dataset describing the SQL table / SQL query.
+
+    数据流的起点；此节点只有来源描述，生成 SQL 时才转成表或子查询引用。
     """
 
+    # 同时告诉选源器“能提供哪些语义项”与 SQL Visitor“实际读哪张表/子查询”；
+    # 若缺少所需维度，选源器才会继续寻找可 JOIN 的其他源。
     data_set: SqlDataSet
 
     def __post_init__(self) -> None:  # noqa: D105

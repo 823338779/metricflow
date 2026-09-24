@@ -13,12 +13,16 @@ from metricflow_semantic_interfaces.enum_extension import assert_values_exhauste
 class DataflowPlanOptimization(Enum):
     """Enumeration of optimization types available for execution.
 
+    控制数据流计划阶段的优化，不是 SQL 计划的优化等级。
+
     Values indicate order of application. Passthrough metric evaluation is applied first as the metric evaluation plan
     is used to generate the initial dataflow plan. The resulting dataflow plan can be fed into the source scan
     optimizer.
     """
 
+    # 尝试合并可共用来源和聚合步骤的指标分支。
     SOURCE_SCAN = 0
+    # 在指标依赖图阶段复用透传指标，目前不属于默认启用集合。
     PASSTHROUGH_METRIC_EVALUATION = 1
 
     @staticmethod

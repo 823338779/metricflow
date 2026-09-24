@@ -21,9 +21,13 @@ class OrderByLimitNode(DataflowPlanNode):
     Attributes:
         order_by_specs: Describes how to order the incoming data.
         limit: Number of rows to limit.
+
+    位于结果输出前，描述最终 ORDER BY 和 LIMIT。
     """
 
+    # 用户要求的结果顺序；SQL Visitor 将 Spec 解析成输出列引用，排序发生在指标计算之后。
     order_by_specs: Sequence[OrderBySpec]
+    # 和 ORDER BY 一起放在末端节点，限制最终结果行数而非源表参与聚合的行数。
     limit: Optional[int]
 
     def __post_init__(self) -> None:  # noqa: D105

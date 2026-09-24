@@ -33,11 +33,15 @@ class MetricQueryDependencyEdge(MetricFlowGraphEdge[MetricQueryNode]):
         A (target_node_output_spec: `bookings_per_listing`) -> C (source_node_output_spec: `listings`)
 
     For the above case, nodes B and C are the dependencies of node A.
+
+    箭头从“需要输入的查询”指向“提供输入的查询”，用于表示指标依赖。
     """
 
-    # A metric that is output by the target node.
+    # 这条依赖服务于目标节点的哪个输出指标；同一个目标节点可计算多个指标，
+    # 规划器据此只保留真正需要的输入边。
     target_node_output_spec: MetricSpec
-    # For the above, the associated dependency from the source node.
+    # 来源节点需交付的具体指标；校验边时须存在于来源的 output_metric_specs 中，
+    # 派生节点再据此找到其表达式所需的输入列。
     source_node_output_spec: MetricSpec
 
     @staticmethod
@@ -81,6 +85,7 @@ class MetricQueryDependencyEdge(MetricFlowGraphEdge[MetricQueryNode]):
         """Return the dependency node for this edge.
 
         This is the same value as `head_node`, but with naming specific to metric dependencies.
+        提供输入指标的节点，例如计算 bookings 的节点。
         """
         return self.head_node
 
@@ -89,5 +94,6 @@ class MetricQueryDependencyEdge(MetricFlowGraphEdge[MetricQueryNode]):
         """Return the node that depends on `source_node`.
 
         This is the same value as `tail_node`, but with naming specific to metric dependencies.
+        使用输入指标的节点，例如计算 bookings_per_listing 的节点。
         """
         return self.tail_node

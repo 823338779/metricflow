@@ -22,7 +22,11 @@ from metricflow_semantic_interfaces.type_enums import DatePart
 
 
 class SqlDataSet(DataSet):
-    """A metric data set along with the associated SQL query node that can be rendered to get those values."""
+    """A metric data set along with the associated SQL query node that can be rendered to get those values.
+
+    instance_set 告诉下一层“这一层有哪些语义列、各列实际叫什么”；SQL 节点说明如何得到它们。
+    JOIN、聚合和列裁剪必须同时读两者，不能只看 SQL 文本猜测列的语义。
+    """
 
     def __init__(
         self,
@@ -36,7 +40,9 @@ class SqlDataSet(DataSet):
             instance_set: Describes the instances in the SQL.
             sql_select_node: The SQL that can be rendered to realize the instance set
         """
+        # 可作为外层 FROM/JOIN 输入的 SELECT；下一位 Visitor 可在其上继续添加投影、聚合或过滤。
         self._sql_select_node = sql_select_node
+        # 非标准 SELECT 形态的 SQL 计划节点；与 _sql_select_node 二选一，由 sql_node 统一暴露。
         self._sql_node = sql_node
         assert_exactly_one_arg_set(sql_select_node=sql_select_node, sql_node=sql_node)
         super().__init__(instance_set=instance_set)

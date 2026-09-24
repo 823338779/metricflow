@@ -16,9 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class DataSet(ABC):
-    """Describes a set of data that a source node in the dataflow plan contains."""
+    """Describes a set of data that a source node in the dataflow plan contains.
+
+    instance_set 描述此阶段实际可用的指标、维度、实体及关联 SQL 列。
+    """
 
     def __init__(self, instance_set: InstanceSet) -> None:  # noqa: D107
+        # 此阶段真实可用的语义列及其 SQL 列关联。选源器据此判断可查询性，
+        # SQL Visitor 据此决定投影、JOIN 键与 GROUP BY；它比表结构描述更贴近查询结果。
         self._instance_set = instance_set
 
     @property

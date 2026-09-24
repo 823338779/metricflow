@@ -42,13 +42,13 @@ class ColumnEqualityDescription:
         `(left_column_alias = right_column_alias OR (left_column_alias IS NULL AND right_column_alias IS NULL))`
     """
 
-    left_column_alias: str
-    right_column_alias: str
-    treat_nulls_as_equal: bool = False
+    left_column_alias: str  # JOIN 左侧用于相等比较的列名。
+    right_column_alias: str  # JOIN 右侧用于相等比较的列名。
+    treat_nulls_as_equal: bool = False  # 为真时补充两侧均为 NULL 的匹配条件。
 
 
 class SqlPlanJoinBuilder:
-    """Helper class for constructing various join components in a SqlQueryPlan."""
+    """根据 JOIN 键、类型和额外条件构造 SqlJoinDescription 的辅助类。"""
 
     @staticmethod
     def make_column_equality_sql_join_description(

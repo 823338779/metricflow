@@ -37,6 +37,8 @@ class SqlPlanNode(DagNode["SqlPlanNode"], ABC):
       the SqlTableNode() since my_table.my_column wouldn't be a valid SQL query.
 
     Is there an existing library that can do this?
+
+    与 DataflowPlanNode 不同，这一层已经显式表示 SELECT、表、JOIN 等 SQL 结构。
     """
 
     @abstractmethod
@@ -108,10 +110,14 @@ class SqlPlanNodeVisitor(Generic[VisitorOutputT], ABC):
 
 @dataclass(frozen=True)
 class SqlSelectColumn:
-    """Represents a column in the select clause of an SQL query."""
+    """Represents a column in the select clause of an SQL query.
 
+    一个 SELECT 输出列：expr 是 SQL 表达式，column_alias 是输出列名。
+    """
+
+    # 这一层实际计算的值，例如 SUM(input) 或 COALESCE(join keys)；Renderer 将它写进 SELECT。
     expr: SqlExpressionNode
-    # Always require a column alias for simplicity.
+    # 对外暴露的列契约；外层查询通过此名引用 expr 的结果，须与 InstanceSet 的列关联保持一致。
     column_alias: str
 
     @staticmethod
@@ -137,7 +143,10 @@ class SqlSelectColumn:
 
 
 class SqlPlan(MetricFlowDag[SqlPlanNode]):
-    """Model for an SQL statement as a DAG."""
+    """Model for an SQL statement as a DAG.
+
+    包含待渲染的 SQL 节点图；Renderer 从 render_node 开始生成最终文本。
+    """
 
     def __init__(self, render_node: SqlPlanNode, plan_id: Optional[DagId] = None) -> None:
         """initializer.
@@ -146,6 +155,7 @@ class SqlPlan(MetricFlowDag[SqlPlanNode]):
             render_node: The node from which to start rendering the SQL statement.
             plan_id: If specified, use this sql_query_plan_id instead of a generated one.
         """
+        # 最外层 SQL 节点，通常是 SELECT；它的父节点表示 FROM/JOIN 子查询。
         self._render_node = render_node
         super().__init__(
             dag_id=plan_id or DagId.from_id_prefix(StaticIdPrefix.SQL_PLAN_PREFIX),

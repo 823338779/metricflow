@@ -41,12 +41,17 @@ class WhereFilterSpec(SerializableDataclass):
             )
         )
     )
+
+    模板解析后的过滤条件；包含可用于 SQL 的表达式和它引用的维度。
     """
 
     # Debating whether where_sql / bind_parameter_set belongs here. where_sql may become dialect specific if we introduce
     # quoted identifiers later.
+    # 已由语义模板解析出的条件；SQL Visitor 把它放进选定层的 WHERE。
     where_sql: str
+    # WHERE 中占位符的实际值，最终与各子句参数合并到 SqlStatement。
     bind_parameters: SqlBindParameterSet
+    # 条件依赖的语义列；Builder 即使不在最终输出这些列，也必须先选源或 JOIN 取得它们。
     element_set: GroupByItemSet
 
     @cached_property

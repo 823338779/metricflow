@@ -27,11 +27,18 @@ if typing.TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class LinkableSpecSet(Mergeable, SerializableDataclass, Collection[LinkableInstanceSpec]):
-    """Groups linkable specs."""
+    """Groups linkable specs.
 
+    查询可用于分组或 JOIN 的引用集合；_build_simple_metric_recipe() 从中读取用户所需维度。
+    """
+
+    # 需要的维度集合；选源器逐项判断本地可得、需实体 JOIN，还是不可满足。
     dimension_specs: Tuple[DimensionSpec, ...] = ()
+    # 含 metric_time 的粒度要求；会影响时间列变换、时间脊选择和 GROUP BY。
     time_dimension_specs: Tuple[TimeDimensionSpec, ...] = ()
+    # 用户要求的实体或 JOIN 必需的实体键；源选择必须保留它们直到关联完成。
     entity_specs: Tuple[EntitySpec, ...] = ()
+    # 特殊的指标值分组需求；构建器必须先让相应指标分支输出可分组实例。
     group_by_metric_specs: Tuple[GroupByMetricSpec, ...] = ()
 
     @property

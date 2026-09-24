@@ -22,10 +22,14 @@ class AggregateSimpleMetricInputsNode(DataflowPlanNode):
     this context to render the appropriate `COALESCE` expressions.
 
     # TODO: Verify `COALESCE` is rendered in `ComputeMetricsNode` to handle `WHERE` filter behavior.
+
+    对父节点的简单指标输入执行配置的 SUM/COUNT 等聚合，按保留下来的分组项分组。
     """
 
     # The `null_fill_value_mapping` should contain an entry for each simple-metric input to support
     # `ComputeMetricsBranchCombiner`.
+    # 每个简单指标输入在聚合后若为 NULL 应填什么值。SQL Visitor 将信息附到输出实例，
+    # ComputeMetricsNode 再据此生成 COALESCE；同源分支合并也检查映射有无冲突。
     null_fill_value_mapping: NullFillValueMapping
 
     def __post_init__(self) -> None:  # noqa: D105

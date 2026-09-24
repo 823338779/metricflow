@@ -18,8 +18,12 @@ class ConstrainTimeRangeNode(DataflowPlanNode):
 
     For example, if the input data set had "sales by date", then this would restrict the data set so that it only
     includes sales for a specific range of dates.
+
+    为父节点加入请求的时间范围过滤；在数据流里与普通 WHERE 节点分开表示。
     """
 
+    # 此节点要落实的时间窗口；SQL Visitor 找父数据集的 metric_time 列后，
+    # 用基础时间粒度生成比较条件，避免在 DATE_TRUNC 后比较而改变边界含义。
     time_range_constraint: TimeRangeConstraint
 
     def __post_init__(self) -> None:  # noqa: D105

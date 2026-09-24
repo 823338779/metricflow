@@ -36,13 +36,17 @@ class MetricQueryNode(MetricFlowGraphNode, Visitable, ABC):
     This maps to a SQL query. The inputs to the node represent the dependencies (e.g. the subqueries that compute the
     input metrics for a derived metric) and the outputs of the node represent the metrics that are computed or passed
     through from the dependencies.
+
+    指标计算计划中的一个查询节点；依赖节点提供输入，本节点计算或透传指标。
     """
 
-    # A unique node ID to identify the node in the plan.
+    # 图遍历用它区分计算节点；日志与计划表也用它定位分支，但它不决定指标值或 SQL 列名。
     node_id: SequentialId
     # The query properties that are associated with the outputs of this node. This is later used to generate the
     # appropriate dataflow nodes. This is needed on a per-query basis as some modifiers for input metrics of a
     # derived metric (e.g. filters and time offsets) can require different query properties.
+    # 从查询元素带来的分组和过滤上下文。下游 Visitor 用它决定聚合粒度与过滤下推；
+    # 即使 metric_specs 相同，上下文不同也不能复用同一计算分支。
     query_properties: MetricQueryPropertySet
 
     @abstractmethod
@@ -53,13 +57,20 @@ class MetricQueryNode(MetricFlowGraphNode, Visitable, ABC):
     @property
     @abstractmethod
     def output_metric_specs(self) -> OrderedSet[MetricSpec]:
-        """Return the specs for the metrics output by this node (both computed and passthrough)."""
+        """Return the specs for the metrics output by this node (both computed and passthrough).
+
+        本节点承诺向后续节点提供的指标集合，含新计算与透传项。规划器用它校验依赖边；
+        简单指标 Visitor 按它逐一建分支。它只描述输出契约，不携带 SQL 行数据。
+        """
         raise NotImplementedError
 
     @property
     @abstractmethod
     def output_query_elements(self) -> OrderedSet[MetricQueryElement]:
-        """Similar to `output_metric_specs`, but as `MetricQueryElement`s."""
+        """Similar to `output_metric_specs`, but as `MetricQueryElement`s.
+
+        除指标引用外，还带上每个输出指标的分组和过滤上下文。
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -82,7 +93,10 @@ class MetricQueryNode(MetricFlowGraphNode, Visitable, ABC):
 
 
 class MetricQueryNodeVisitor(Generic[VisitorOutputT], ABC):
-    """A visitor interface for type-safe handling of different node types."""
+    """A visitor interface for type-safe handling of different node types.
+
+    节点通过 accept() 分派到对应的 visit_* 方法；具体 Visitor 决定做校验、格式化还是计划转换。
+    """
 
     @abstractmethod
     def visit_simple_metrics_query_node(self, node: SimpleMetricsQueryNode) -> VisitorOutputT:  # noqa: D102
@@ -123,7 +137,11 @@ class SimpleMetricsQueryNode(BaseMetricQueryNode):
     multiple simple metrics. However, modifiers such as filters can require separate queries.
     """
 
+    # 上游按 semantic model 将可共用来源的简单指标组织到同一求值节点；
+    # 此字段保留该来源身份供裁剪、计划展示等使用。本 Visitor 并不直接凭它生成 FROM 表。
     model_id: SemanticModelId
+    # 这一组待计算的指标引用。它决定 output_metric_specs，Visitor 对每项构建独立分支；
+    # 优化器随后才判断能否共享源扫描。过滤修饰不同的指标不能随意合成同一查询。
     metric_specs: FrozenOrderedSet[MetricSpec]
 
     @staticmethod
@@ -183,6 +201,7 @@ class SimpleMetricsQueryNode(BaseMetricQueryNode):
     @cached_property
     @override
     def output_metric_specs(self) -> OrderedSet[MetricSpec]:
+        """简单指标节点的输出，就是本节点计算的 metric_specs。"""
         return self.metric_specs
 
     @override
@@ -252,6 +271,7 @@ class CumulativeMetricQueryNode(BaseMetricQueryNode):
     @cached_property
     @override
     def output_metric_specs(self) -> OrderedSet[MetricSpec]:
+        """累计指标节点只输出自身的一个 metric_spec。"""
         return FrozenOrderedSet((self.metric_spec,))
 
     @override
@@ -320,6 +340,7 @@ class ConversionMetricQueryNode(BaseMetricQueryNode):
     @cached_property
     @override
     def output_metric_specs(self) -> OrderedSet[MetricSpec]:
+        """转换指标节点只输出自身的一个 metric_spec。"""
         return FrozenOrderedSet((self.metric_spec,))
 
     @override
@@ -345,11 +366,14 @@ class ConversionMetricQueryNode(BaseMetricQueryNode):
 
 @fast_frozen_dataclass(order=False)
 class DerivedMetricsQueryNode(MetricQueryNode):
-    """Represents a query for derived metric."""
+    """Represents a query for derived metric.
 
-    # The derived metrics that are computed in this query.
+    ratio 和 derived 指标在此层都可能表现为依赖其他指标的查询节点。
+    """
+
+    # 本节点实际计算出的指标；与下面原样透传的指标共同组成 output_metric_specs。
     computed_metric_specs: FrozenOrderedSet[MetricSpec]
-    # The metrics that are passed through unchanged from one of the input queries.
+    # 从输入查询原样带到输出的指标；它们也属于 output_metric_specs。
     passthrough_metric_specs: FrozenOrderedSet[MetricSpec]
 
     def __post_init__(self) -> None:  # noqa: D105
@@ -419,6 +443,7 @@ class DerivedMetricsQueryNode(MetricQueryNode):
     @cached_property
     @override
     def output_metric_specs(self) -> OrderedSet[MetricSpec]:
+        """派生指标节点同时输出新计算的指标和从输入节点透传的指标。"""
         return FrozenOrderedSet(itertools.chain(self.computed_metric_specs, self.passthrough_metric_specs))
 
     @override
@@ -454,10 +479,13 @@ class TopLevelQueryNode(MetricQueryNode):
 
     The top-level generally represents the metrics that are queried by the user. This node provides a single
     entry point for dependency traversal.
+
+    代表用户此次请求的最终指标集合，本身不计算指标，只接收依赖节点的结果。
     """
 
     # The actual computation of the metrics is modeled through the dependencies, so this node can be modeled as only
     # passing through metrics computed in subqueries.
+    # 用户最终请求的指标，由依赖节点计算后在这里汇总输出。
     passthrough_metric_specs: FrozenOrderedSet[MetricSpec]
 
     def __post_init__(self) -> None:  # noqa: D105
@@ -508,6 +536,7 @@ class TopLevelQueryNode(MetricQueryNode):
     @cached_property
     @override
     def output_metric_specs(self) -> OrderedSet[MetricSpec]:
+        """顶层节点只透传用户请求的指标，不在此节点重新计算。"""
         return self.passthrough_metric_specs
 
     @cached_property

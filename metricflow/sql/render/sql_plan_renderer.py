@@ -35,19 +35,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SqlPlanRenderResult:  # noqa: D101
-    # The SQL string that could be run.
+    # Renderer 从 SqlPlan 递归拼出的方言 SQL；执行任务随后把它包装进 SqlStatement。
     sql: str
-    # The execution parameters that should be specified along with the SQL str to execute()
+    # 各子句渲染时累积的占位符参数；必须与 sql 一起传给数据库，不能只复制文本。
     bind_parameter_set: SqlBindParameterSet
 
 
 class SqlPlanRenderer(SqlPlanNodeVisitor[SqlPlanRenderResult], ABC):
-    """Renders SQL plans to a string."""
+    """Renders SQL plans to a string.
+
+    从 SqlPlan.render_node 开始递归访问 SQL 节点，生成方言相关的文本与绑定参数。
+    """
 
     def _render_node(self, node: SqlPlanNode) -> SqlPlanRenderResult:
         return node.accept(self)
 
     def render_sql_plan(self, sql_query_plan: SqlPlan) -> SqlPlanRenderResult:  # noqa: D102
+        """渲染结构化 SQL 计划的最外层节点。"""
         return self._render_node(sql_query_plan.render_node)
 
     @property
@@ -68,7 +72,10 @@ class StringJoinDescription:
 
 
 class DefaultSqlPlanRenderer(SqlPlanRenderer):
-    """Renders an SQL plan following ANSI SQL."""
+    """Renders an SQL plan following ANSI SQL.
+
+    PostgreSQL 等方言 Renderer 继承它，并可替换表达式渲染规则。
+    """
 
     # The renderer that is used to render the SQL expressions.
     EXPR_RENDERER = DefaultSqlExpressionRenderer()
@@ -337,6 +344,7 @@ class DefaultSqlPlanRenderer(SqlPlanRenderer):
         return SqlPlanRenderResult(sql=f"LIMIT {limit_value}", bind_parameter_set=SqlBindParameterSet())
 
     def visit_select_statement_node(self, node: SqlSelectStatementNode) -> SqlPlanRenderResult:  # noqa: D102
+        """按 SELECT/FROM/JOIN/WHERE/GROUP BY/ORDER BY/LIMIT 顺序拼接 SQL。"""
         render_results = [
             self._render_description_section(node.description),
             self._render_cte_sections(node.cte_sources),
