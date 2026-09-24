@@ -1,0 +1,8 @@
+metric:
+  name: listings
+  type: simple
+  type_params:
+    expr: "1"
+    metric_aggregation_params:
+      semantic_model: listings_latest
+      agg: sum

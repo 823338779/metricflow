@@ -1,0 +1,7 @@
+metric:
+  name: bookings_per_listing_pct
+  type: derived
+  type_params:
+    expr: "bookings_per_listing * 100"
+    metrics:
+      - name: bookings_per_listing

@@ -1,0 +1,8 @@
+metric:
+  name: bookings
+  type: simple
+  type_params:
+    expr: "1"
+    metric_aggregation_params:
+      semantic_model: bookings_source
+      agg: sum

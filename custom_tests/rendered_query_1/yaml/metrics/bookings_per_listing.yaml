@@ -1,0 +1,8 @@
+metric:
+  name: bookings_per_listing
+  type: ratio
+  type_params:
+    numerator:
+      name: bookings
+    denominator:
+      name: listings
