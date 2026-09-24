@@ -5,10 +5,6 @@ semantic_model:
     alias: fct_bookings
   defaults:
     agg_time_dimension: ds
-  measures:
-    - name: bookings
-      expr: "1"
-      agg: sum
   dimensions:
     - name: ds
       type: time
