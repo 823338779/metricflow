@@ -627,7 +627,9 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
                 dimension_specs=query_spec.dimension_specs,
                 time_dimension_specs=query_spec.time_dimension_specs,
             )
+        # 按是否包含指标选择构建路径；指标查询也可以包含用于分组的维度。
         if query_spec.metric_specs:
+            # 包含指标时构建指标计算计划，例如“按城市统计销售额”。
             # 先展开指标依赖，再把指标计算计划转换为数据流操作图。
             logger.info(
                 LazyFormat(
@@ -640,6 +642,7 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
                 optimizations=mf_query_request.dataflow_plan_optimizations,
             )
         else:
+            # 不包含指标时构建维度去重值查询计划，例如“查询有哪些城市”。
             logger.info(
                 LazyFormat(
                     "Building dataflow plan for distinct values",
