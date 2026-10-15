@@ -12,6 +12,7 @@ from metricflow_semantic_interfaces.implementations.metric import (
 )
 from metricflow_semantic_interfaces.implementations.semantic_manifest import PydanticSemanticManifest
 from metricflow_semantic_interfaces.test_utils import metric_with_guaranteed_meta, semantic_model_with_guaranteed_meta
+from metricflow_semantic_interfaces.type_enums import MetricType
 from metricflow_semantic_interfaces.validations.dimension_value_mapping import DimensionValueMappingRule
 from tests_metricflow_semantic_interfaces.example_project_configuration import EXAMPLE_PROJECT_CONFIGURATION
 
@@ -98,7 +99,7 @@ def test_computational_mapping_model_is_rejected(mapping_manifest: PydanticSeman
         mapping_manifest.metrics = [
             metric_with_guaranteed_meta(
                 name="count",
-                type="simple",
+                type=MetricType.SIMPLE,
                 type_params=PydanticMetricTypeParams(
                     metric_aggregation_params=PydanticMetricAggregationParams(
                         semantic_model="status_codes", agg="count", expr="1"

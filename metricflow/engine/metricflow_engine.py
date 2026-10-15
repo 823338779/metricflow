@@ -4,7 +4,7 @@ import datetime
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Optional
 
@@ -498,6 +498,8 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
         )
         model_lookup = semantic_manifest_lookup.semantic_model_lookup
         for model_reference, semantic_model in model_lookup.model_reference_to_model.items():
+            if model_reference in semantic_manifest_lookup.value_mapping_lookup.mapping_model_references:
+                continue
             data_set = converter.create_sql_source_data_set(model_reference)
             self._source_data_sets.append(data_set)
             logger.debug(LazyFormat("Created source dataset from semantic model", model_reference=model_reference))
@@ -616,6 +618,12 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
                 min_max_only=mf_query_request.min_max_only,
                 apply_group_by=mf_query_request.apply_group_by,
             ).query_spec
+        query_spec = replace(
+            query_spec,
+            output_value_mapping_specs=(
+                query_spec.dimension_specs if mf_query_request.query_type == MetricFlowQueryType.METRIC else ()
+            ),
+        )
         logger.debug(LazyFormat("Parsed query", query_spec=query_spec))
 
         output_selection_specs: Optional[InstanceSpecSet] = None
@@ -813,6 +821,11 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
             semantic_model_lookup = self._semantic_manifest_lookup.semantic_model_lookup
             for dimension_reference in semantic_model_lookup.get_dimension_references():
                 for semantic_model in semantic_model_lookup.get_semantic_models_for_dimension(dimension_reference):
+                    if (
+                        semantic_model.reference
+                        in self._semantic_manifest_lookup.value_mapping_lookup.mapping_model_references
+                    ):
+                        continue
                     dimension = Dimension.from_pydantic(
                         pydantic_dimension=SemanticModelHelper.get_dimension_from_semantic_model(
                             semantic_model=semantic_model, dimension_reference=dimension_reference

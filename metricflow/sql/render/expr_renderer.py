@@ -17,6 +17,7 @@ from metricflow_semantics.sql.sql_exprs import (
     SqlArithmeticOperator,
     SqlBetweenExpression,
     SqlCaseExpression,
+    SqlCastToStringExpression,
     SqlCastToTimestampExpression,
     SqlColumnAliasReferenceExpression,
     SqlColumnReferenceExpression,
@@ -265,6 +266,19 @@ class DefaultSqlExpressionRenderer(SqlExpressionRenderer):
 
         return SqlExpressionRenderResult(
             sql=f"{arg_rendered.sql} IS NULL" if not node.arg.requires_parenthesis else f"({arg_rendered.sql}) IS NULL",
+            bind_parameter_set=arg_rendered.bind_parameter_set,
+        )
+
+    @property
+    def string_data_type(self) -> str:
+        """Unbounded string type for display output."""
+        return "VARCHAR"
+
+    def visit_cast_to_string_expr(self, node: SqlCastToStringExpression) -> SqlExpressionRenderResult:
+        """Cast using the warehouse's text type."""
+        arg_rendered = self.render_sql_expr(node.arg)
+        return SqlExpressionRenderResult(
+            sql=f"CAST({arg_rendered.sql} AS {self.string_data_type})",
             bind_parameter_set=arg_rendered.bind_parameter_set,
         )
 

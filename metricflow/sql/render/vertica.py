@@ -34,6 +34,10 @@ class VerticaSqlExpressionRenderer(DefaultSqlExpressionRenderer):
     sql_engine = SqlEngine.VERTICA
 
     @property
+    def string_data_type(self) -> str:  # noqa: D102
+        return "LONG VARCHAR"
+
+    @property
     @override
     def double_data_type(self) -> str:
         """Custom double data type for the Vertica engine."""

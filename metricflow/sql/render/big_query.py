@@ -36,6 +36,10 @@ class BigQuerySqlExpressionRenderer(DefaultSqlExpressionRenderer):
     sql_engine = SqlEngine.BIGQUERY
 
     @property
+    def string_data_type(self) -> str:  # noqa: D102
+        return "STRING"
+
+    @property
     @override
     def double_data_type(self) -> str:
         """Custom double data type for BigQuery engine."""

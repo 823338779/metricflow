@@ -142,7 +142,10 @@ class DataflowNodeToSqlCteVisitor(DataflowNodeToSqlSubqueryVisitor):
         # If the given node is supposed to use a CTE, generate one for it. Otherwise, use the default subquery as the
         # source for the SELECT.
         select_from_subquery_dataset = node_to_select_subquery_function(node)
-        if node not in self._nodes_to_convert_to_cte:
+        if (
+            node not in self._nodes_to_convert_to_cte
+            or select_from_subquery_dataset.pending_output_value_mapping is not None
+        ):
             logger.debug(LazyFormat("Handling node via subquery", node=node))
             return select_from_subquery_dataset
         logger.debug(LazyFormat("Handling node via new CTE", node=node))

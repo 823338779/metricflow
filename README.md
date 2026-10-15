@@ -107,3 +107,26 @@ Version 0.150.0 to 0.208.2 was covered by the BSL license.
 Version 0.209.0 and greater is covered by the Apache 2.0 license.
 
 MetricFlow is built by [dbt Labs](https://www.getdbt.com/).
+
+## Dimension display mappings (vendored extension)
+
+Categorical dimensions support a native `value_mapping` field with `semantic_model`,
+`value_dimension`, and `display_dimension`. The referenced semantic model declares the
+physical lookup relation and expressions; it cannot contain measures, source metrics, or
+recursive mappings. Lookup keys must be unique (guaranteed by the project owner).
+
+MetricFlow resolves output instance lineage, then adds one
+`ApplyDimensionValueMappingsNode` after ordering, limiting and output aliasing.
+SQL conversion defers its independent LEFT JOINs until raw SQL optimization finishes.
+Mappings only replace final output expressions; they never change grouping or filters.
+Many raw values may produce identical labels without merging result rows. Missing or
+NULL labels fall back to raw text; NULL raw values remain NULL. Empty labels are preserved.
+
+Dictionary models are excluded from the computation graph. Dimension-value queries
+return raw values. Normal and saved metric queries share this behavior through
+`MetricFlowEngine.query()` and `explain()`. Result-table writes are supported.
+`mf validate-configs` and the native `validate_value_mapping_data` adapter entry point
+validate types and NULL keys without checking uniqueness.
+
+This is a coordinated extension of the vendored dbt and semantic-interface artifacts,
+not a claim of support by unmodified upstream releases.

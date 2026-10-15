@@ -12,6 +12,7 @@ if typing.TYPE_CHECKING:
     from metricflow.dataflow.nodes.add_generated_uuid import AddGeneratedUuidColumnNode
     from metricflow.dataflow.nodes.aggregate_simple_metric_inputs import AggregateSimpleMetricInputsNode
     from metricflow.dataflow.nodes.alias_specs import AliasSpecsNode
+    from metricflow.dataflow.nodes.apply_dimension_value_mappings import ApplyDimensionValueMappingsNode
     from metricflow.dataflow.nodes.combine_aggregated_outputs import CombineAggregatedOutputsNode
     from metricflow.dataflow.nodes.compute_metrics import ComputeMetricsNode
     from metricflow.dataflow.nodes.constrain_time import ConstrainTimeRangeNode
@@ -127,6 +128,13 @@ class DataflowPlanNodeVisitor(Generic[VisitorOutputT], ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def visit_apply_dimension_value_mappings_node(
+        self, node: ApplyDimensionValueMappingsNode
+    ) -> VisitorOutputT:  # noqa: D102
+        """Visit the final dimension display boundary."""
+        raise NotImplementedError
+
+    @abstractmethod
     def visit_alias_specs_node(self, node: AliasSpecsNode) -> VisitorOutputT:  # noqa: D102
         raise NotImplementedError
 
@@ -233,6 +241,12 @@ class DataflowPlanNodeVisitorWithDefaultHandler(DataflowPlanNodeVisitor[VisitorO
 
     @override
     def visit_join_to_custom_granularity_node(self, node: JoinToCustomGranularityNode) -> VisitorOutputT:  # noqa: D102
+        return self._default_handler(node)
+
+    @override
+    def visit_apply_dimension_value_mappings_node(
+        self, node: ApplyDimensionValueMappingsNode
+    ) -> VisitorOutputT:  # noqa: D102
         return self._default_handler(node)
 
     @override

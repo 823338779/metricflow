@@ -13,6 +13,7 @@ from metricflow_semantics.sql.sql_table import SqlTable
 from metricflow_semantics.toolkit.mf_logging.lazy_formattable import LazyFormat
 from metricflow_semantics.toolkit.visitor import Visitable
 
+from metricflow.data_table.mf_column import ColumnDescription
 from metricflow.data_table.mf_table import MetricFlowDataTable
 from metricflow.protocols.sql_client import SqlClient
 
@@ -102,17 +103,20 @@ class SelectSqlQueryToDataTableTask(ExecutionPlanTask):
 
     sql_client: SqlClient
     parent_nodes: Tuple[ExecutionPlanTask, ...]
+    display_columns: tuple[str, ...] = ()
 
     @staticmethod
     def create(  # noqa: D102
         sql_client: SqlClient,
         sql_statement: SqlStatement,
         parent_nodes: Sequence[ExecutionPlanTask] = (),
+        display_columns: tuple[str, ...] = (),
     ) -> SelectSqlQueryToDataTableTask:
         return SelectSqlQueryToDataTableTask(
             sql_client=sql_client,
             sql_statement=sql_statement,
             parent_nodes=tuple(parent_nodes),
+            display_columns=display_columns,
         )
 
     @classmethod
@@ -137,6 +141,14 @@ class SelectSqlQueryToDataTableTask(ExecutionPlanTask):
             sql_statement.sql,
             sql_bind_parameter_set=sql_statement.bind_parameter_set,
         )
+        if self.display_columns:
+            df = MetricFlowDataTable(
+                column_descriptions=tuple(
+                    ColumnDescription(column.column_name, str) if column.column_name in self.display_columns else column
+                    for column in df.column_descriptions
+                ),
+                rows=df.rows,
+            )
 
         end_time = time.perf_counter()
         return TaskExecutionResult(

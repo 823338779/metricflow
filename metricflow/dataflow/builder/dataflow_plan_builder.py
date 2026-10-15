@@ -9,6 +9,7 @@ from metricflow_semantics.dag.id_prefix import StaticIdPrefix
 from metricflow_semantics.dag.mf_dag import DagId
 from metricflow_semantics.errors.custom_grain_not_supported import error_if_not_standard_grain
 from metricflow_semantics.errors.error_classes import (
+    DimensionValueMappingError,
     InvalidManifestException,
     MetricFlowInternalError,
     UnableToSatisfyQueryError,
@@ -80,6 +81,10 @@ from metricflow.dataflow.dataflow_plan import (
 from metricflow.dataflow.nodes.add_generated_uuid import AddGeneratedUuidColumnNode
 from metricflow.dataflow.nodes.aggregate_simple_metric_inputs import AggregateSimpleMetricInputsNode
 from metricflow.dataflow.nodes.alias_specs import AliasSpecsNode, SpecToAlias
+from metricflow.dataflow.nodes.apply_dimension_value_mappings import (
+    ApplyDimensionValueMappingsNode,
+    DimensionValueMappingBinding,
+)
 from metricflow.dataflow.nodes.combine_aggregated_outputs import CombineAggregatedOutputsNode
 from metricflow.dataflow.nodes.compute_metrics import ComputeMetricsNode
 from metricflow.dataflow.nodes.constrain_time import ConstrainTimeRangeNode
@@ -160,6 +165,7 @@ class DataflowPlanBuilder:
     ) -> None:
         # 选源与实体路径评估需要语义模型之间的关系，不能只看物理表名。
         self._semantic_model_lookup = semantic_manifest_lookup.semantic_model_lookup
+        self._value_mapping_lookup = semantic_manifest_lookup.value_mapping_lookup
         # 将 MetricSpec 指向的名称解析为指标定义，确定类型、依赖和聚合时间规则。
         self._metric_lookup = semantic_manifest_lookup.metric_lookup
         # 将简单指标名映射到具体输入表达式/聚合规则，生成 SimpleMetricRecipe。
@@ -210,6 +216,7 @@ class DataflowPlanBuilder:
 
         sink_node = DataflowPlanBuilder.build_sink_node(
             parent_node=metrics_output_node,
+            value_mapping_bindings=self._bind_value_mappings(metrics_output_node, query_spec),
             desired_output_metric_specs=query_spec.metric_specs,
             desired_output_group_by_item_specs=(
                 query_spec.dimension_specs + query_spec.time_dimension_specs + query_spec.entity_specs
@@ -934,6 +941,7 @@ class DataflowPlanBuilder:
 
         sink_node = self.build_sink_node(
             parent_node=output_node,
+            value_mapping_bindings=self._bind_value_mappings(output_node, query_spec),
             order_by_specs=query_spec.order_by_specs,
             desired_output_metric_specs=query_spec.metric_specs,
             desired_output_group_by_item_specs=(
@@ -944,6 +952,23 @@ class DataflowPlanBuilder:
         plan = DataflowPlan(sink_nodes=[sink_node])
         return self._optimize_plan(plan=plan, option_set=option_set)
 
+    def _bind_value_mappings(
+        self, parent_node: DataflowPlanNode, query_spec: MetricFlowQuerySpec
+    ) -> tuple[DimensionValueMappingBinding, ...]:
+        """Use output instance lineage, never a dimension-name-only lookup."""
+        if not query_spec.output_value_mapping_specs or not self._value_mapping_lookup.mapping_model_references:
+            return ()
+        instances = self._node_data_set_resolver.get_output_data_set(parent_node).instance_set.dimension_instances
+        bindings = []
+        for output_spec in query_spec.output_value_mapping_specs:
+            matches = [item for item in instances if item.spec.with_alias(None) == output_spec.with_alias(None)]
+            if len(matches) != 1 or len(matches[0].defined_from) != 1:
+                raise DimensionValueMappingError("Ambiguous output dimension origin", {"dimension": str(output_spec)})
+            mapping = self._value_mapping_lookup.get(matches[0].defined_from[0])
+            if mapping is not None:
+                bindings.append(DimensionValueMappingBinding(output_spec=output_spec, mapping=mapping))
+        return tuple(bindings)
+
     @staticmethod
     def build_sink_node(
         parent_node: DataflowPlanNode,
@@ -952,6 +977,7 @@ class DataflowPlanBuilder:
         order_by_specs: Sequence[OrderBySpec],
         output_sql_table: Optional[SqlTable] = None,
         limit: Optional[int] = None,
+        value_mapping_bindings: tuple[DimensionValueMappingBinding, ...] = (),
     ) -> DataflowPlanNode:
         """Adds order by / limit / alias / write nodes.
 
@@ -977,6 +1003,20 @@ class DataflowPlanBuilder:
             sink_node = DataflowPlanBuilder._add_alias_node(
                 sink_node, desired_output_metric_specs, desired_output_group_by_item_specs
             )
+
+        if value_mapping_bindings:
+            # Carry raw ordering through aliases so the outer SELECT preserves query ordering.
+            output_by_unaliased: dict[InstanceSpec, InstanceSpec] = {
+                spec.with_alias(None): spec for spec in output_specs
+            }
+            mapped_order = tuple(
+                OrderBySpec(
+                    instance_spec=output_by_unaliased.get(item.instance_spec.with_alias(None), item.instance_spec),
+                    descending=item.descending,
+                )
+                for item in order_by_specs
+            )
+            sink_node = ApplyDimensionValueMappingsNode.create(sink_node, value_mapping_bindings, mapped_order)
 
         write_result_node: DataflowPlanNode
         if not output_sql_table:

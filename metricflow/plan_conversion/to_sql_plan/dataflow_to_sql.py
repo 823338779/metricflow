@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence, Set
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Optional, cast
 
 from metricflow_semantics.dag.mf_dag import DagId
+from metricflow_semantics.errors.error_classes import DimensionValueMappingError
 from metricflow_semantics.model.semantic_manifest_lookup import SemanticManifestLookup
 from metricflow_semantics.specs.column_assoc import ColumnAssociationResolver
 from metricflow_semantics.time.time_spine_source import TimeSpineSource
@@ -15,17 +16,22 @@ from metricflow.dataflow.dataflow_plan import (
     DataflowPlanNode,
 )
 from metricflow.dataflow.dataflow_plan_analyzer import DataflowPlanAnalyzer
+from metricflow.dataflow.nodes.apply_dimension_value_mappings import ApplyDimensionValueMappingsNode
+from metricflow.dataflow.nodes.write_to_data_table import WriteToResultDataTableNode
+from metricflow.dataflow.nodes.write_to_table import WriteToResultTableNode
 from metricflow.dataset.sql_dataset import SqlDataSet
 from metricflow.plan_conversion.convert_to_sql_plan import ConvertToSqlPlanResult
 from metricflow.plan_conversion.to_sql_plan.dataflow_to_cte import DataflowNodeToSqlCteVisitor
 from metricflow.plan_conversion.to_sql_plan.dataflow_to_subquery import DataflowNodeToSqlSubqueryVisitor
 from metricflow.plan_conversion.to_sql_plan.output_column_orderer import OutputColumnOrderer
+from metricflow.plan_conversion.to_sql_plan.output_value_mapping import apply_output_value_mapping
 from metricflow.protocols.sql_client import SqlEngine
 from metricflow.sql.optimizer.optimization_levels import (
     SqlGenerationOptionSet,
     SqlOptimizationLevel,
 )
 from metricflow.sql.optimizer.sql_query_plan_optimizer import SqlPlanOptimizer
+from metricflow.sql.sql_ctas_node import SqlCreateTableAsNode
 from metricflow.sql.sql_plan import (
     SqlPlan,
     SqlPlanNode,
@@ -173,6 +179,20 @@ class DataflowToSqlPlanConverter:
         output_column_orderer: Optional[OutputColumnOrderer] = None,
     ) -> ConvertToSqlPlanResult:
         """Helper method to convert using specific options. Main use case are tests."""
+        # Both CTE and subquery lowering must keep the display boundary immediately before the sink.
+        pending_nodes = [dataflow_plan_node]
+        visited: set[DataflowPlanNode] = set()
+        while pending_nodes:
+            node = pending_nodes.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            if type(node) not in (WriteToResultDataTableNode, WriteToResultTableNode):
+                if any(type(parent) is ApplyDimensionValueMappingsNode for parent in node.parent_nodes):
+                    raise DimensionValueMappingError(
+                        "Dimension value mappings require a final output boundary", {"node": node.description}
+                    )
+            pending_nodes.extend(node.parent_nodes)
         logger.debug(
             LazyFormat("Converting to SQL", nodes_to_convert_to_cte=[node.node_id for node in nodes_to_convert_to_cte])
         )
@@ -196,9 +216,14 @@ class DataflowToSqlPlanConverter:
                 output_column_orderer=output_column_orderer,
             )
             data_set = dataflow_plan_node.accept(to_sql_cte_visitor)
-            select_statement = data_set.checked_sql_select_node
+            original_sql_node = data_set.sql_node
+            select_statement = original_sql_node.as_select_node
+            if select_statement is None:
+                select_statement = original_sql_node.parent_nodes[0].as_select_node
+            assert select_statement is not None
             data_set = SqlDataSet(
                 instance_set=data_set.instance_set,
+                pending_output_value_mapping=data_set.pending_output_value_mapping,
                 sql_select_node=SqlSelectStatementNode.create(
                     description=select_statement.description,
                     select_columns=select_statement.select_columns,
@@ -214,7 +239,19 @@ class DataflowToSqlPlanConverter:
                 ),
             )
 
+            if original_sql_node.as_select_node is None:
+                data_set = SqlDataSet(
+                    instance_set=data_set.instance_set,
+                    pending_output_value_mapping=data_set.pending_output_value_mapping,
+                    sql_node=SqlCreateTableAsNode.create(
+                        sql_table=cast(SqlCreateTableAsNode, original_sql_node).sql_table, parent_node=data_set.sql_node
+                    ),
+                )
+
         sql_node: SqlPlanNode = data_set.sql_node
+        ctas_node = sql_node if type(sql_node) is SqlCreateTableAsNode else None
+        if ctas_node is not None:
+            sql_node = ctas_node.parent_node
 
         for optimizer in optimizers:
             logger.debug(LazyFormat(lambda: f"Applying optimizer: {optimizer.__class__.__name__}"))
@@ -226,10 +263,19 @@ class DataflowToSqlPlanConverter:
                 )
             )
 
+        display_columns: tuple[str, ...] = ()
+        if data_set.pending_output_value_mapping is not None:
+            pending = data_set.pending_output_value_mapping
+            sql_node = apply_output_value_mapping(sql_node, pending)
+            display_columns = tuple(mapping.source_column_name for mapping in pending.mappings)
+        if ctas_node is not None:
+            sql_node = SqlCreateTableAsNode.create(sql_table=ctas_node.sql_table, parent_node=sql_node)
+
         # SQL 计划优化完成后返回结构化节点图，不在此处拼接最终 SQL 字符串。
         return ConvertToSqlPlanResult(
             instance_set=data_set.instance_set,
             sql_plan=SqlPlan(render_node=sql_node, plan_id=sql_query_plan_id),
+            display_columns=display_columns,
         )
 
     def _get_nodes_to_convert_to_cte(

@@ -18,3 +18,4 @@ class ConvertToSqlPlanResult:
     instance_set: InstanceSet
     # SQL 优化完成后的结构化 SELECT/JOIN 图；Renderer 消费它才生成方言 SQL。
     sql_plan: SqlPlan
+    display_columns: tuple[str, ...] = ()

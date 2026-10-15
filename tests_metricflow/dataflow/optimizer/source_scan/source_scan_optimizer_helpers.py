@@ -16,6 +16,7 @@ from metricflow.dataflow.dataflow_plan_visitor import DataflowPlanNodeVisitor
 from metricflow.dataflow.nodes.add_generated_uuid import AddGeneratedUuidColumnNode
 from metricflow.dataflow.nodes.aggregate_simple_metric_inputs import AggregateSimpleMetricInputsNode
 from metricflow.dataflow.nodes.alias_specs import AliasSpecsNode
+from metricflow.dataflow.nodes.apply_dimension_value_mappings import ApplyDimensionValueMappingsNode
 from metricflow.dataflow.nodes.combine_aggregated_outputs import CombineAggregatedOutputsNode
 from metricflow.dataflow.nodes.compute_metrics import ComputeMetricsNode
 from metricflow.dataflow.nodes.constrain_time import ConstrainTimeRangeNode
@@ -170,6 +171,9 @@ class _ReadSqlSourceNodeCounter(DataflowPlanNodeVisitor[int]):
         return self._sum_parents(node)
 
     def visit_alias_specs_node(self, node: AliasSpecsNode) -> int:  # noqa: D102
+        return self._sum_parents(node)
+
+    def visit_apply_dimension_value_mappings_node(self, node: ApplyDimensionValueMappingsNode) -> int:  # noqa: D102
         return self._sum_parents(node)
 
     def visit_offset_base_grain_by_custom_grain_node(self, node: OffsetBaseGrainByCustomGrainNode) -> int:  # noqa: D102

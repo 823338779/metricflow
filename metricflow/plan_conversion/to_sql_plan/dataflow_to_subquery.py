@@ -8,7 +8,11 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 from metricflow_semantics.aggregation_properties import AggregationState
 from metricflow_semantics.dag.id_prefix import StaticIdPrefix
 from metricflow_semantics.dag.sequential_id import SequentialIdGenerator
-from metricflow_semantics.errors.error_classes import MetricFlowInternalError, SemanticManifestConfigurationError
+from metricflow_semantics.errors.error_classes import (
+    DimensionValueMappingError,
+    MetricFlowInternalError,
+    SemanticManifestConfigurationError,
+)
 from metricflow_semantics.filters.time_constraint import TimeRangeConstraint
 from metricflow_semantics.instances import (
     GroupByMetricInstance,
@@ -73,6 +77,7 @@ from metricflow.dataflow.dataflow_plan_visitor import DataflowPlanNodeVisitor
 from metricflow.dataflow.nodes.add_generated_uuid import AddGeneratedUuidColumnNode
 from metricflow.dataflow.nodes.aggregate_simple_metric_inputs import AggregateSimpleMetricInputsNode
 from metricflow.dataflow.nodes.alias_specs import AliasSpecsNode
+from metricflow.dataflow.nodes.apply_dimension_value_mappings import ApplyDimensionValueMappingsNode
 from metricflow.dataflow.nodes.combine_aggregated_outputs import CombineAggregatedOutputsNode
 from metricflow.dataflow.nodes.compute_metrics import ComputeMetricsNode
 from metricflow.dataflow.nodes.constrain_time import ConstrainTimeRangeNode
@@ -93,7 +98,9 @@ from metricflow.dataflow.nodes.where_filter import WhereFilterNode
 from metricflow.dataflow.nodes.window_reaggregation_node import WindowReaggregationNode
 from metricflow.dataflow.nodes.write_to_data_table import WriteToResultDataTableNode
 from metricflow.dataflow.nodes.write_to_table import WriteToResultTableNode
+from metricflow.dataset.convert_semantic_model import SemanticModelToDataSetConverter
 from metricflow.dataset.dataset_classes import DataSet
+from metricflow.dataset.output_value_mapping import OutputValueMapping, PendingOutputValueMapping
 from metricflow.dataset.sql_dataset import AnnotatedSqlDataSet, SqlDataSet
 from metricflow.plan_conversion.instance_set_transforms.aggregated_simple_metric_input import (
     CreateAggregatedSimpleMetricInputsTransform,
@@ -851,6 +858,7 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
 
         return SqlDataSet(
             instance_set=input_data_set.instance_set,
+            pending_output_value_mapping=input_data_set.pending_output_value_mapping,
             sql_select_node=SqlSelectStatementNode.create(
                 description=node.description,
                 select_columns=transform_result.get_columns(self._output_column_orderer),
@@ -872,6 +880,7 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
 
         return SqlDataSet(
             instance_set=input_data_set.instance_set,
+            pending_output_value_mapping=input_data_set.pending_output_value_mapping,
             sql_node=SqlCreateTableAsNode.create(
                 sql_table=node.output_sql_table,
                 parent_node=SqlSelectStatementNode.create(
@@ -1580,6 +1589,69 @@ class DataflowNodeToSqlSubqueryVisitor(DataflowPlanNodeVisitor[SqlDataSet]):
 
         raise RuntimeError(
             f"Custom granularity {custom_granularity} not found. This indicates internal misconfiguration."
+        )
+
+    def visit_apply_dimension_value_mappings_node(self, node: ApplyDimensionValueMappingsNode) -> SqlDataSet:
+        """Resolve physical dictionary projections and defer joins until optimization ends."""
+        parent = self.get_output_data_set(node.parent_node)
+        assert parent.pending_output_value_mapping is None
+        converter = SemanticModelToDataSetConverter(
+            column_association_resolver=self._column_association_resolver,
+            manifest_lookup=self._semantic_manifest_lookup,
+        )
+        mappings = []
+        for binding in node.mappings:
+            sources = tuple(
+                instance for instance in parent.instance_set.dimension_instances if instance.spec == binding.output_spec
+            )
+            if (
+                len(sources) != 1
+                or sources[0].defined_from != (binding.mapping.source_dimension,)
+                or self._semantic_manifest_lookup.value_mapping_lookup.get(binding.mapping.source_dimension)
+                != binding.mapping
+            ):
+                raise DimensionValueMappingError(
+                    "Dimension mapping does not match the output source", {"dimension": str(binding.output_spec)}
+                )
+            target = converter.create_sql_source_data_set(binding.mapping.target_model)
+            value_instance = next(
+                item
+                for item in target.instance_set.dimension_instances
+                if item.spec.element_name == binding.mapping.value_dimension.element_name and not item.spec.entity_links
+            )
+            display_instance = next(
+                item
+                for item in target.instance_set.dimension_instances
+                if item.spec.element_name == binding.mapping.display_dimension.element_name
+                and not item.spec.entity_links
+            )
+            # Prune dictionary projections to the two declared expressions, without aggregating the key.
+            wanted = {value_instance.associated_column.column_name, display_instance.associated_column.column_name}
+            projection = target.checked_sql_select_node
+            mapping_select = SqlSelectStatementNode.create(
+                description="Dimension display dictionary",
+                select_columns=tuple(col for col in projection.select_columns if col.column_alias in wanted),
+                from_source=projection.from_source,
+                from_source_alias=projection.from_source_alias,
+            )
+            mappings.append(
+                OutputValueMapping(
+                    source_column_name=parent.column_association_for_dimension(binding.output_spec).column_name,
+                    mapping_select=mapping_select,
+                    value_column_name=value_instance.associated_column.column_name,
+                    display_column_name=display_instance.associated_column.column_name,
+                )
+            )
+        return SqlDataSet(
+            instance_set=parent.instance_set,
+            sql_select_node=parent.checked_sql_select_node,
+            pending_output_value_mapping=PendingOutputValueMapping(
+                mappings=tuple(mappings),
+                order_by_columns=tuple(
+                    (self._column_association_resolver.resolve_spec(item.instance_spec).column_name, item.descending)
+                    for item in node.order_by_specs
+                ),
+            ),
         )
 
     def visit_alias_specs_node(self, node: AliasSpecsNode) -> SqlDataSet:  # noqa: D102

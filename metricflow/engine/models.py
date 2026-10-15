@@ -14,6 +14,7 @@ from metricflow_semantic_interfaces.protocols.dimension import (
 from metricflow_semantic_interfaces.protocols.dimension import (
     DimensionType,
     DimensionTypeParams,
+    DimensionValueMapping,
 )
 from metricflow_semantic_interfaces.protocols.entity import Entity as SemanticManifestEntity
 from metricflow_semantic_interfaces.protocols.export import Export
@@ -102,6 +103,7 @@ class Dimension(SearchableElement):
     is_partition: bool = False
     expr: Optional[str] = None
     label: Optional[str] = None
+    value_mapping: Optional[DimensionValueMapping] = None
 
     @classmethod
     def from_pydantic(
@@ -129,6 +131,7 @@ class Dimension(SearchableElement):
             is_partition=pydantic_dimension.is_partition,
             expr=pydantic_dimension.expr,
             label=pydantic_dimension.label,
+            value_mapping=pydantic_dimension.value_mapping,
             entity_links=entity_links,
             semantic_model_reference=semantic_model_reference,
         )

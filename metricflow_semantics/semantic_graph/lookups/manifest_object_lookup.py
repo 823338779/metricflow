@@ -24,6 +24,7 @@ from more_itertools import peekable
 from typing_extensions import override
 
 from metricflow_semantic_interfaces.protocols import Metric, SemanticManifest, SemanticModel
+from metricflow_semantic_interfaces.references import SemanticModelReference
 from metricflow_semantic_interfaces.type_enums import MetricType, TimeGranularity
 
 logger = logging.getLogger(__name__)
@@ -45,8 +46,14 @@ class ManifestObjectLookup(AttributePrettyFormattable):
     this module / other implementations.
     """
 
-    def __init__(self, semantic_manifest: SemanticManifest) -> None:  # noqa: D107
+    def __init__(
+        self,
+        semantic_manifest: SemanticManifest,
+        excluded_model_references: frozenset[SemanticModelReference] = frozenset(),
+    ) -> None:  # noqa: D107
+        """Create an optional computation-only view of a complete manifest."""
         self._semantic_manifest = semantic_manifest
+        self._excluded_model_references = excluded_model_references
         self._time_spine_sources = TimeSpineSource.build_standard_time_spine_sources(semantic_manifest)
         self._custom_grains = TimeSpineSource.build_custom_granularities(self._time_spine_sources.values())
 
@@ -56,7 +63,13 @@ class ManifestObjectLookup(AttributePrettyFormattable):
 
     @cached_property
     def semantic_models(self) -> Sequence[SemanticModel]:  # noqa: D102
-        return self._semantic_manifest.semantic_models
+        if not self._excluded_model_references:
+            return self._semantic_manifest.semantic_models
+        return tuple(
+            model
+            for model in self._semantic_manifest.semantic_models
+            if model.reference not in self._excluded_model_references
+        )
 
     @cached_property
     def _semantic_model_and_simple_metrics_pairs(self) -> Sequence[Pair[SemanticModel, Sequence[Metric]]]:
@@ -73,7 +86,7 @@ class ManifestObjectLookup(AttributePrettyFormattable):
                 model_name_to_simple_metrics[metric_aggregation_params.semantic_model].append(metric)
 
         semantic_model_and_simple_metrics_pairs: list[Pair[SemanticModel, Sequence[Metric]]] = []
-        for semantic_model in self._semantic_manifest.semantic_models:
+        for semantic_model in self.semantic_models:
             semantic_model_and_simple_metrics_pairs.append(
                 (semantic_model, model_name_to_simple_metrics.get(semantic_model.name) or ())
             )

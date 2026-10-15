@@ -29,6 +29,10 @@ class RedshiftSqlExpressionRenderer(DefaultSqlExpressionRenderer):
     sql_engine = SqlEngine.REDSHIFT
 
     @property
+    def string_data_type(self) -> str:  # noqa: D102
+        return "VARCHAR(65535)"
+
+    @property
     @override
     def double_data_type(self) -> str:
         """Custom double data type for the Redshift engine."""

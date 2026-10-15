@@ -39,7 +39,7 @@ class PydanticDimensionValueMapping(HashableBaseModel):
     @validator("semantic_model", "value_dimension", "display_dimension", pre=True)
     def validate_reference(cls, value: object) -> str:
         """Do not coerce numbers or accept empty identifiers."""
-        if type(value) is not str or not value.strip():
+        if type(value) is not str or not value.strip():  # noqa: E721
             raise ValueError("Mapping references must be non-empty strings")
         return value
 

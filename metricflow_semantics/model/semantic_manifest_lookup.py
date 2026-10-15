@@ -5,6 +5,7 @@ from functools import cached_property
 
 from metricflow_semantics.model.semantics.metric_lookup import MetricLookup
 from metricflow_semantics.model.semantics.semantic_model_lookup import SemanticModelLookup
+from metricflow_semantics.model.semantics.value_mapping_lookup import ValueMappingLookup
 from metricflow_semantics.semantic_graph.attribute_resolution.recipe_writer_path import (
     AttributeRecipeWriterPath,
 )
@@ -40,11 +41,15 @@ class SemanticManifestLookup:
 
         pathfinder = MetricFlowPathfinder[SemanticGraphNode, SemanticGraphEdge, AttributeRecipeWriterPath]()
         self._manifest_object_lookup = ManifestObjectLookup(semantic_manifest)
-        graph_builder = SemanticGraphBuilder(manifest_object_lookup=self._manifest_object_lookup)
+        self._value_mapping_lookup = ValueMappingLookup(semantic_manifest)
+        computation_lookup = ManifestObjectLookup(
+            semantic_manifest, self._value_mapping_lookup.mapping_model_references
+        )
+        graph_builder = SemanticGraphBuilder(manifest_object_lookup=computation_lookup)
         semantic_graph = graph_builder.build()
 
         group_by_item_set_resolver = SemanticGraphGroupByItemSetResolver(
-            manifest_object_lookup=self._manifest_object_lookup,
+            manifest_object_lookup=computation_lookup,
             semantic_graph=semantic_graph,
             path_finder=pathfinder,
         )
@@ -52,8 +57,13 @@ class SemanticManifestLookup:
         self._metric_lookup = MetricLookup(
             semantic_manifest=semantic_manifest,
             group_by_item_set_resolver=group_by_item_set_resolver,
-            manifest_object_lookup=self._manifest_object_lookup,
+            manifest_object_lookup=computation_lookup,
         )
+
+    @property
+    def value_mapping_lookup(self) -> ValueMappingLookup:
+        """Display mappings, including targets excluded from computation."""
+        return self._value_mapping_lookup
 
     @property
     def semantic_manifest(self) -> SemanticManifest:  # noqa: D102

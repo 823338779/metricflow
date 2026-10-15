@@ -33,6 +33,10 @@ class PostgresSqlExpressionRenderer(DefaultSqlExpressionRenderer):
     sql_engine = SqlEngine.POSTGRES
 
     @property
+    def string_data_type(self) -> str:  # noqa: D102
+        return "TEXT"
+
+    @property
     @override
     def double_data_type(self) -> str:
         """Custom double data type for the PostgreSQL engine."""

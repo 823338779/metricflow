@@ -66,6 +66,10 @@ class SemanticException(MetricFlowException):  # noqa: D101
     pass
 
 
+class DimensionValueMappingError(UnableToSatisfyQueryError):
+    """An output dimension mapping could not be resolved safely."""
+
+
 class DuplicateMetricError(SemanticException):  # noqa: D101
     pass
 

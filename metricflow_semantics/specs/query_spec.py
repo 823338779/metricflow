@@ -68,6 +68,7 @@ class MetricFlowQuerySpec(SerializableDataclass):
     metric_specs: Tuple[MetricSpec, ...] = ()
     # 普通维度需求；源选择器据此判断本地可得还是必须通过实体关联取得。
     dimension_specs: Tuple[DimensionSpec, ...] = ()
+    output_value_mapping_specs: tuple[DimensionSpec, ...] = ()
     # 请求作为结果列的实体；与隐含的 JOIN 键不同，必须出现在最终输出粒度中。
     entity_specs: Tuple[EntitySpec, ...] = ()
     # 例如 metric_time__day；决定时间变换及聚合粒度，也可能影响时间脊选择。
@@ -111,6 +112,7 @@ class MetricFlowQuerySpec(SerializableDataclass):
         return MetricFlowQuerySpec(
             metric_specs=self.metric_specs,
             dimension_specs=self.dimension_specs,
+            output_value_mapping_specs=self.output_value_mapping_specs,
             entity_specs=self.entity_specs,
             time_dimension_specs=self.time_dimension_specs,
             group_by_metric_specs=self.group_by_metric_specs,

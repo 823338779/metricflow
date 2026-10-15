@@ -13,6 +13,7 @@ from metricflow_semantics.toolkit.mf_logging.lazy_formattable import LazyFormat
 from typing_extensions import override
 
 from metricflow.dataset.dataset_classes import DataSet
+from metricflow.dataset.output_value_mapping import PendingOutputValueMapping
 from metricflow.sql.sql_plan import (
     SqlPlanNode,
 )
@@ -33,6 +34,7 @@ class SqlDataSet(DataSet):
         instance_set: InstanceSet,
         sql_select_node: Optional[SqlSelectStatementNode] = None,
         sql_node: Optional[SqlPlanNode] = None,
+        pending_output_value_mapping: Optional[PendingOutputValueMapping] = None,
     ) -> None:
         """Constructor.
 
@@ -44,6 +46,7 @@ class SqlDataSet(DataSet):
         self._sql_select_node = sql_select_node
         # 非标准 SELECT 形态的 SQL 计划节点；与 _sql_select_node 二选一，由 sql_node 统一暴露。
         self._sql_node = sql_node
+        self.pending_output_value_mapping = pending_output_value_mapping
         assert_exactly_one_arg_set(sql_select_node=sql_select_node, sql_node=sql_node)
         super().__init__(instance_set=instance_set)
 
@@ -64,7 +67,12 @@ class SqlDataSet(DataSet):
         sql_node = self._sql_node
         if sql_node:
             sql_node = sql_node.copy()
-        return SqlDataSet(instance_set=self.instance_set, sql_select_node=sql_select_node, sql_node=sql_node)
+        return SqlDataSet(
+            instance_set=self.instance_set,
+            sql_select_node=sql_select_node,
+            sql_node=sql_node,
+            pending_output_value_mapping=self.pending_output_value_mapping,
+        )
 
     @property
     def checked_sql_select_node(self) -> SqlSelectStatementNode:

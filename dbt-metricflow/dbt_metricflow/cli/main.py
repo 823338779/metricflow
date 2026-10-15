@@ -613,6 +613,9 @@ def validate_configs(
 
     dw_results = SemanticManifestValidationResults()
     if not skip_dw:
+        from dbt_metricflow.cli.dbt_connectors.value_mapping_validation import validate_value_mapping_data
+
+        validate_value_mapping_data(cfg.semantic_manifest_lookup, cfg.dbt_artifacts.adapter)
         # fetch dbt adapters. This rebuilds the manifest again, but whatever.
         dw_validator = DataWarehouseModelValidator(sql_client=cfg.sql_client)
         dw_results = _data_warehouse_validations_runner(

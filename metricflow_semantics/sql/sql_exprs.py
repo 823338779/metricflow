@@ -230,6 +230,10 @@ class SqlExpressionNodeVisitor(Generic[VisitorOutputT], ABC):
         pass
 
     @abstractmethod
+    def visit_cast_to_string_expr(self, node: SqlCastToStringExpression) -> VisitorOutputT:  # noqa: D102
+        pass
+
+    @abstractmethod
     def visit_cast_to_timestamp_expr(self, node: SqlCastToTimestampExpression) -> VisitorOutputT:  # noqa: D102
         pass
 
@@ -1560,6 +1564,53 @@ class SqlCastToTimestampExpression(SqlExpressionNode):
 
     def matches(self, other: SqlExpressionNode) -> bool:  # noqa: D102
         if not isinstance(other, SqlCastToTimestampExpression):
+            return False
+        return self._parents_match(other)
+
+
+@dataclass(frozen=True, eq=False)
+class SqlCastToStringExpression(SqlExpressionNode):
+    """Cast to the string type like CAST('2020-01-01' AS STRING)."""
+
+    arg: SqlExpressionNode
+
+    @staticmethod
+    def create(arg: SqlExpressionNode) -> SqlCastToStringExpression:  # noqa: D102
+        return SqlCastToStringExpression(
+            parent_nodes=(arg,),
+            arg=arg,
+        )
+
+    @classmethod
+    def id_prefix(cls) -> IdPrefix:  # noqa: D102
+        return StaticIdPrefix.SQL_EXPR_CAST_TO_STRING_PREFIX
+
+    @property
+    def requires_parenthesis(self) -> bool:  # noqa: D102
+        return False
+
+    def accept(self, visitor: SqlExpressionNodeVisitor[VisitorOutputT]) -> VisitorOutputT:  # noqa: D102
+        return visitor.visit_cast_to_string_expr(self)
+
+    @property
+    def description(self) -> str:  # noqa: D102
+        return "Cast to String"
+
+    def rewrite(  # noqa: D102
+        self,
+        column_replacements: Optional[SqlColumnReplacements] = None,
+        should_render_table_alias: Optional[bool] = None,
+    ) -> SqlExpressionNode:
+        return SqlCastToStringExpression.create(arg=self.arg.rewrite(column_replacements, should_render_table_alias))
+
+    @property
+    def lineage(self) -> SqlExpressionTreeLineage:  # noqa: D102
+        return SqlExpressionTreeLineage.merge_iterable(
+            tuple(x.lineage for x in self.parent_nodes) + (SqlExpressionTreeLineage(other_exprs=(self,)),)
+        )
+
+    def matches(self, other: SqlExpressionNode) -> bool:  # noqa: D102
+        if type(other) is not SqlCastToStringExpression:
             return False
         return self._parents_match(other)
 

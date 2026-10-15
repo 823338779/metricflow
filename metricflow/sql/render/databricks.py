@@ -23,6 +23,10 @@ class DatabricksSqlExpressionRenderer(DefaultSqlExpressionRenderer):
     sql_engine = SqlEngine.DATABRICKS
 
     @property
+    def string_data_type(self) -> str:  # noqa: D102
+        return "STRING"
+
+    @property
     @override
     def supported_percentile_function_types(self) -> Collection[SqlPercentileFunctionType]:
         return {SqlPercentileFunctionType.CONTINUOUS, SqlPercentileFunctionType.APPROXIMATE_DISCRETE}

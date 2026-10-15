@@ -14,6 +14,7 @@ from metricflow.dataflow.dataflow_plan_visitor import DataflowPlanNodeVisitor
 from metricflow.dataflow.nodes.add_generated_uuid import AddGeneratedUuidColumnNode
 from metricflow.dataflow.nodes.aggregate_simple_metric_inputs import AggregateSimpleMetricInputsNode
 from metricflow.dataflow.nodes.alias_specs import AliasSpecsNode
+from metricflow.dataflow.nodes.apply_dimension_value_mappings import ApplyDimensionValueMappingsNode
 from metricflow.dataflow.nodes.combine_aggregated_outputs import CombineAggregatedOutputsNode
 from metricflow.dataflow.nodes.compute_metrics import ComputeMetricsNode
 from metricflow.dataflow.nodes.constrain_time import ConstrainTimeRangeNode
@@ -108,6 +109,7 @@ class DataflowToExecutionPlanConverter(DataflowPlanNodeVisitor[ConvertToExecutio
                 SelectSqlQueryToDataTableTask.create(
                     sql_client=self._sql_client,
                     sql_statement=SqlStatement(render_sql_result.sql, render_sql_result.bind_parameter_set),
+                    display_columns=convert_to_sql_plan_result.display_columns,
                 ),
             )
         )
@@ -225,6 +227,12 @@ class DataflowToExecutionPlanConverter(DataflowPlanNodeVisitor[ConvertToExecutio
 
     @override
     def visit_join_to_custom_granularity_node(self, node: JoinToCustomGranularityNode) -> ConvertToExecutionPlanResult:
+        raise NotImplementedError
+
+    @override
+    def visit_apply_dimension_value_mappings_node(
+        self, node: ApplyDimensionValueMappingsNode
+    ) -> ConvertToExecutionPlanResult:
         raise NotImplementedError
 
     @override
