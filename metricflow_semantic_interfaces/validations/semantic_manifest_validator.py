@@ -6,10 +6,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Generic, List, Sequence
 
 from metricflow_semantic_interfaces.protocols import SemanticManifest, SemanticManifestT
-from metricflow_semantic_interfaces.validations.agg_time_dimension import (
-    AggregationTimeDimensionRule,
-)
+from metricflow_semantic_interfaces.validations.agg_time_dimension import AggregationTimeDimensionRule
 from metricflow_semantic_interfaces.validations.dimension_const import DimensionConsistencyRule
+from metricflow_semantic_interfaces.validations.dimension_value_mapping import DimensionValueMappingRule
 from metricflow_semantic_interfaces.validations.element_const import ElementConsistencyRule
 from metricflow_semantic_interfaces.validations.entities import NaturalEntityConfigurationRule
 from metricflow_semantic_interfaces.validations.labels import (
@@ -39,9 +38,7 @@ from metricflow_semantic_interfaces.validations.semantic_models import (
     SemanticModelDefaultsRule,
     SemanticModelValidityWindowRule,
 )
-from metricflow_semantic_interfaces.validations.time_dimension_has_granularity import (
-    TimeDimensionHasGranularityRule,
-)
+from metricflow_semantic_interfaces.validations.time_dimension_has_granularity import TimeDimensionHasGranularityRule
 from metricflow_semantic_interfaces.validations.time_spines import TimeSpineRule
 from metricflow_semantic_interfaces.validations.unique_valid_name import (
     PrimaryEntityDimensionPairs,
@@ -79,6 +76,7 @@ class SemanticManifestValidator(Generic[SemanticManifestT]):
         SemanticModelMeasuresUniqueRule[SemanticManifestT](),
         SemanticModelValidityWindowRule[SemanticManifestT](),
         DimensionConsistencyRule[SemanticManifestT](),
+        DimensionValueMappingRule[SemanticManifestT](),
         ElementConsistencyRule[SemanticManifestT](),
         NaturalEntityConfigurationRule[SemanticManifestT](),
         MeasureConstraintAliasesRule[SemanticManifestT](),

@@ -5,11 +5,30 @@ from typing import Optional, Protocol
 
 from metricflow_semantic_interfaces.protocols.meta import SemanticLayerElementConfig
 from metricflow_semantic_interfaces.protocols.metadata import Metadata
-from metricflow_semantic_interfaces.references import (
-    DimensionReference,
-    TimeDimensionReference,
-)
+from metricflow_semantic_interfaces.references import DimensionReference, TimeDimensionReference
 from metricflow_semantic_interfaces.type_enums import DataType, DimensionType, TimeGranularity
+
+
+class DimensionValueMapping(Protocol):
+    """A display-only lookup into another semantic model."""
+
+    @property
+    @abstractmethod
+    def semantic_model(self) -> str:
+        """Name of the display semantic model."""
+        ...
+
+    @property
+    @abstractmethod
+    def value_dimension(self) -> str:
+        """Dimension containing the unique raw key."""
+        ...
+
+    @property
+    @abstractmethod
+    def display_dimension(self) -> str:
+        """Dimension containing the display text."""
+        ...
 
 
 class DimensionValidityParams(Protocol):
@@ -49,6 +68,12 @@ class DimensionTypeParams(Protocol):
 
 class Dimension(Protocol):
     """Describes a dimension."""
+
+    @property
+    @abstractmethod
+    def value_mapping(self) -> Optional[DimensionValueMapping]:
+        """Optional final-output mapping; never changes calculation semantics."""
+        ...
 
     @property
     @abstractmethod

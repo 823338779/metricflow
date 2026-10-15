@@ -1,22 +1,47 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Dict, Optional
 
 from metricflow_semantic_interfaces.implementations.base import (
     HashableBaseModel,
     ModelWithMetadataParsing,
+    PydanticParseableValueType,
 )
-from metricflow_semantic_interfaces.implementations.element_config import (
-    PydanticSemanticLayerElementConfig,
-)
+from metricflow_semantic_interfaces.implementations.element_config import PydanticSemanticLayerElementConfig
 from metricflow_semantic_interfaces.implementations.metadata import PydanticMetadata
-from metricflow_semantic_interfaces.references import (
-    DimensionReference,
-    TimeDimensionReference,
-)
+from metricflow_semantic_interfaces.parsing.yaml_loader import PARSING_CONTEXT_KEY
+from metricflow_semantic_interfaces.references import DimensionReference, TimeDimensionReference
 from metricflow_semantic_interfaces.type_enums import DataType, DimensionType, TimeGranularity
+from msi_pydantic_shim import root_validator, validator
 
 ISO8601_FMT = "YYYY-MM-DD"
+
+
+class PydanticDimensionValueMapping(HashableBaseModel):
+    """References used only to replace a dimension's final display value."""
+
+    semantic_model: str
+    value_dimension: str
+    display_dimension: str
+
+    class Config:
+        """Reject misspelled mapping fields."""
+
+        extra = "forbid"
+
+    @root_validator(pre=True)
+    def remove_loader_context(
+        cls, values: Dict[str, PydanticParseableValueType]
+    ) -> Dict[str, PydanticParseableValueType]:
+        """The native YAML loader attaches context to every mapping."""
+        return {key: value for key, value in values.items() if key != PARSING_CONTEXT_KEY}
+
+    @validator("semantic_model", "value_dimension", "display_dimension", pre=True)
+    def validate_reference(cls, value: object) -> str:
+        """Do not coerce numbers or accept empty identifiers."""
+        if type(value) is not str or not value.strip():
+            raise ValueError("Mapping references must be non-empty strings")
+        return value
 
 
 class PydanticDimensionValidityParams(HashableBaseModel):
@@ -47,6 +72,7 @@ class PydanticDimension(HashableBaseModel, ModelWithMetadataParsing):
     description: Optional[str]
     type: DimensionType
     datatype: Optional[DataType] = None
+    value_mapping: Optional[PydanticDimensionValueMapping] = None
     is_partition: bool = False
     type_params: Optional[PydanticDimensionTypeParams]
     expr: Optional[str] = None
