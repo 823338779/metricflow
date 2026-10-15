@@ -19,6 +19,9 @@ from metricflow_semantic_interfaces.references import SemanticModelElementRefere
 
 logger = logging.getLogger(__name__)
 
+# StarRocks query schemas return INT, which the adapter's numeric predicate omits.
+INTEGER_TYPE_ALIAS = "int"
+
 
 def _projection(data_set: SqlDataSet, dimension_name: str) -> SqlSelectStatementNode:
     """Project only the declared dimension expression, including model expr aliases."""
@@ -43,7 +46,11 @@ def _type_family(column: Column) -> str:
     """Normalize parameterized scalar types that adapters may return verbatim."""
     dtype = column.dtype.lower().strip()
     # DuckDB returns DECIMAL(12,2), while adapter is_number() recognizes DECIMAL.
-    if column.is_number() or re.fullmatch(r"(decimal|numeric|number)\s*\(\s*\d+\s*(,\s*\d+\s*)?\)", dtype):
+    if (
+        column.is_number()
+        or dtype == INTEGER_TYPE_ALIAS
+        or re.fullmatch(r"(decimal|numeric|number)\s*\(\s*\d+\s*(,\s*\d+\s*)?\)", dtype)
+    ):
         return "number"
     if column.is_string() or re.fullmatch(r"(varchar|char|character varying)\s*\(\s*\d+\s*\)", dtype):
         return "text"

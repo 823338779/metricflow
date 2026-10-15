@@ -6,15 +6,21 @@ from typing import cast
 
 import duckdb
 import pytest
-from dbt.adapters.base import BaseAdapter
+from dbt.adapters.base import BaseAdapter, Column
 from dbt.adapters.duckdb.column import DuckDBColumn
 from metricflow_semantics.errors.error_classes import DimensionValueMappingError
 from metricflow_semantics.model.semantic_manifest_lookup import SemanticManifestLookup
 
-from dbt_metricflow.cli.dbt_connectors.value_mapping_validation import validate_value_mapping_data
+from dbt_metricflow.cli.dbt_connectors.value_mapping_validation import _compatible, validate_value_mapping_data
 from tests_metricflow.mapping_fixtures import make_mapping_manifest
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.mark.parametrize("key_type,expected", [("smallint", True), ("bigint", True), ("varchar", False)])
+def test_int_alias_mapping_key_compatibility(key_type: str, expected: bool) -> None:
+    """StarRocks reports INT even though the base adapter does not classify that alias as numeric."""
+    assert _compatible(Column(column="status", dtype="int"), Column(column="code", dtype=key_type)) is expected
 
 
 class QueryAdapter:
