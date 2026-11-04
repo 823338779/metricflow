@@ -38,6 +38,7 @@ class MetricNamingScheme(QueryItemNamingScheme):
             input_str, semantic_manifest_lookup=semantic_manifest_lookup, query_item_location=query_item_location
         ):
             raise InvalidQuerySyntax(f"{repr(input_str)} does not follow this scheme.")
+        # 生成“按指标名称匹配”的条件；此时还没有从 manifest 候选中选出具体 Spec。
         return MetricSpecPattern(metric_reference=MetricReference(element_name=input_str))
 
     @override
@@ -47,6 +48,7 @@ class MetricNamingScheme(QueryItemNamingScheme):
         semantic_manifest_lookup: SemanticManifestLookup,
         query_item_location: QueryItemLocation = QueryItemLocation.NON_ORDER_BY,
     ) -> bool:
+        # 没有左括号就按普通名称处理；即使名称不存在也会通过，存在性由后续 Resolver 检查。
         return "(" not in input_str
 
     @override

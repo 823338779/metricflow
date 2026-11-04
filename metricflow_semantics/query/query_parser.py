@@ -85,6 +85,8 @@ class MetricFlowQueryParser:
         where_filter_pattern_factory: WhereFilterPatternFactory = DefaultWhereFilterPatternFactory(),
     ) -> None:
         self._manifest_lookup = semantic_manifest_lookup
+        # 命名规则实例由各个输入共用；每个输入另建 ResolverInput，并不各建一个解析器。
+        # 指标先尝试普通名称；分组先尝试 Dimension(...) 等表达式，再尝试双下划线名称。
         self._metric_naming_schemes = (MetricNamingScheme(), ObjectBuilderNamingScheme())
         self._group_by_item_naming_schemes = (ObjectBuilderNamingScheme(), DunderNamingScheme())
         self._where_filter_pattern_factory = where_filter_pattern_factory
@@ -408,11 +410,13 @@ class MetricFlowQueryParser:
         """
         if min_max_only and (metric_names or metrics):
             raise InvalidQueryException("Cannot use min_max_only param for queries with metrics.")
+        # 同一种输入只能选一种表达方式，例如指标名称列表与指标参数对象不能同时传。
         assert_at_most_one_arg_set(metric_names=metric_names, metrics=metrics)
         assert_at_most_one_arg_set(group_by_names=group_by_names, group_by=group_by)
         assert_at_most_one_arg_set(order_by_names=order_by_names, order_by=order_by)
         assert_at_most_one_arg_set(where_constraints=where_constraints, where_constraint_strs=where_constraint_strs)
 
+        # 未传入的可遍历参数统一为空序列，后面可以直接进入循环。
         metric_names = metric_names or ()
         metrics = metrics or ()
 
@@ -425,12 +429,15 @@ class MetricFlowQueryParser:
         input_to_issue_set_mapping_item: List[InputToIssueSetMappingItem] = []
 
         resolver_inputs_for_metrics: List[ResolverInputForMetric] = []
+        # 只遍历本次请求的指标。第九个用例只有 gross_revenue，不遍历 manifest 的所有指标。
         for metric_name in metric_names:
             resolver_input_for_metric: Optional[MetricFlowQueryResolverInput] = None
+            # 找到能识别输入形式的规则；此处尚未确认这个指标在 manifest 中存在。
             for metric_naming_scheme in self._metric_naming_schemes:
                 if metric_naming_scheme.input_str_follows_scheme(
                     metric_name, semantic_manifest_lookup=self._manifest_lookup
                 ):
+                    # 保存原始输入、命名规则和匹配条件，供后面的 Resolver 查找具体 MetricSpec。
                     resolver_input_for_metric = ResolverInputForMetric(
                         input_obj=metric_name,
                         naming_scheme=metric_naming_scheme,
@@ -439,6 +446,7 @@ class MetricFlowQueryParser:
                         ),
                     )
                     resolver_inputs_for_metrics.append(resolver_input_for_metric)
+                    # 仅退出命名规则循环；外层仍会继续处理下一个请求指标。
                     break
             if resolver_input_for_metric is None:
                 resolver_input_for_metric = InvalidStringInput(metric_name)
@@ -458,13 +466,17 @@ class MetricFlowQueryParser:
                 metric_query_parameter.query_resolver_input(semantic_manifest_lookup=self._manifest_lookup)
             )
 
+        # 每个分组输入各建一个描述对象。这里只收集，不在此处去重或规划 JOIN。
         resolver_inputs_for_group_by_items: List[ResolverInputForGroupByItem] = []
         for group_by_name in group_by_names:
+            # 每处理一个新名称，都重新开始寻找适用的命名规则。
             resolver_input_for_group_by_item: Optional[MetricFlowQueryResolverInput] = None
             for group_by_item_naming_scheme in self._group_by_item_naming_schemes:
                 if group_by_item_naming_scheme.input_str_follows_scheme(
                     group_by_name, semantic_manifest_lookup=self._manifest_lookup
                 ):
+                    # 例如 order_line__order_status 拆成实体路径 order_line 和维度名 order_status。
+                    # 这一步得到匹配条件；维度是否存在、能否用于当前指标，要交给 Resolver 校验。
                     spec_pattern = group_by_item_naming_scheme.spec_pattern(
                         group_by_name, semantic_manifest_lookup=self._manifest_lookup
                     )
@@ -511,6 +523,8 @@ class MetricFlowQueryParser:
                 )
             )
 
+        # WHERE 是 SQL 模板，不按整个字符串尝试前面的命名规则。
+        # {{ Dimension(...) }} 等引用让后续规划知道过滤需要哪些维度或实体。
         where_filters: List[PydanticWhereFilter] = []
 
         if where_constraints is not None:
@@ -528,22 +542,30 @@ class MetricFlowQueryParser:
                 ]
             )
 
+        # Intersection 表示各条件同时成立（AND）。这里只组合模板，还未渲染 WHERE SQL。
+        # QueryLevel 标记这些条件来自本次查询，以便与指标定义里的内置过滤区分。
         resolver_input_for_filter = ResolverInputForQueryLevelWhereFilterIntersection(
             where_filter_intersection=PydanticWhereFilterIntersection(where_filters=where_filters)
         )
 
+        # 创建真正的解析器：用 manifest 查找语义对象，用过滤匹配工厂处理模板中的引用。
+        # 当前请求尚未传给它，实际入口是后面的 resolve_query()。
         query_resolver = MetricFlowQueryResolver(
             manifest_lookup=self._manifest_lookup, where_filter_pattern_factory=self._where_filter_pattern_factory
         )
 
+        # 汇总两种排序输入；第九个用例未传排序参数，结果仍为空列表。
         resolver_inputs_for_order_by: List[ResolverInputForOrderByItem] = []
         resolver_inputs_for_order_by.extend(self._parse_order_by_names(order_by_names=order_by_names))
         resolver_inputs_for_order_by.extend(self._parse_order_by(order_by=order_by))
 
+        # 包装查询选项；此处只记录参数，不生成 LIMIT 或 GROUP BY。
         resolver_input_for_limit = ResolverInputForLimit(limit=limit)
         resolver_input_for_min_max_only = ResolverInputForMinMaxOnly(min_max_only=min_max_only)
         resolver_input_for_apply_group_by = ResolverInputForApplyGroupBy(apply_group_by=apply_group_by)
 
+        # 汇总整份查询的解析输入。tuple() 只把列表转成元组，不执行语义解析。
+        # 前面已识别输入格式；接下来才结合 manifest 确认具体 Spec 及查询是否合法。
         resolver_input_for_query = ResolverInputForQuery(
             metric_inputs=tuple(resolver_inputs_for_metrics),
             group_by_item_inputs=tuple(resolver_inputs_for_group_by_items),
@@ -558,6 +580,7 @@ class MetricFlowQueryParser:
             LazyFormat(lambda: "Resolver input for query is:\n" + mf_indent(mf_pformat(resolver_input_for_query)))
         )
 
+        # 返回结果同时包含 QuerySpec、解析过程信息和输入问题；此时还没有数据流计划或 SQL。
         query_resolution = query_resolver.resolve_query(resolver_input_for_query)
 
         logger.debug(LazyFormat("Resolved query", query_resolution=query_resolution))
@@ -568,8 +591,10 @@ class MetricFlowQueryParser:
             ),
         )
 
+        # checked_query_spec 确认无解析问题且结果存在，再取出供 Builder 使用的查询规格。
         query_spec = query_resolution.checked_query_spec
         assert query_resolution.resolution_dag is not None
+        # 只有显式传入时间边界才补齐、调整范围；第九个用例会跳过此分支。
         if time_constraint_start is not None or time_constraint_end is not None:
             if time_constraint_start is None:
                 time_constraint_start = TimeRangeConstraint.ALL_TIME_BEGIN()

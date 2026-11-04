@@ -63,6 +63,7 @@ class DunderNamingScheme(QueryItemNamingScheme):
             raise InvalidQuerySyntax(f"{repr(input_str)} does not follow this scheme.")
 
         input_str = input_str.lower()
+        # 拆解双下划线名称，例如 user__vip_flag 得到实体路径 user 和元素名 vip_flag。
         structured_name = StructuredLinkableSpecName.from_name(
             qualified_name=input_str,
             custom_granularity_names=tuple(semantic_manifest_lookup.custom_granularities.keys()),
@@ -72,6 +73,7 @@ class DunderNamingScheme(QueryItemNamingScheme):
         fields_to_compare = TimeDimensionPattern.get_fields_to_compare(
             time_granularity_name=structured_name.time_granularity_name, date_part=date_part
         )
+        # 把拆出的名称、实体路径、时间粒度打包成匹配条件，后续再校验实际可用的维度。
         return EntityLinkPattern(
             parameter_set=SpecPatternParameterSet.from_parameters(
                 element_name=structured_name.element_name,
@@ -90,6 +92,7 @@ class DunderNamingScheme(QueryItemNamingScheme):
         query_item_location: QueryItemLocation = QueryItemLocation.NON_ORDER_BY,
     ) -> bool:
         # This naming scheme is case-insensitive.
+        # 此处只检查名称语法及不支持的日期部分后缀，不查询维度是否存在。
         input_str = input_str.lower()
         if DunderNamingScheme._INPUT_REGEX.match(input_str) is None:
             return False
