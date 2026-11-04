@@ -1,0 +1,8 @@
+project_configuration:
+  time_spines:
+    - node_relation:
+        schema_name: $source_schema
+        alias: mf_time_spine
+      primary_column:
+        name: ds
+        time_granularity: day

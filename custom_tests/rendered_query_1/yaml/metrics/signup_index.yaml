@@ -1,0 +1,7 @@
+metric:
+  name: signup_index
+  type: derived
+  type_params:
+    expr: "orders_per_signup * 100"
+    metrics:
+      - name: orders_per_signup

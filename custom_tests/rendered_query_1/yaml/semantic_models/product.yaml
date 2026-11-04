@@ -1,0 +1,23 @@
+semantic_model:
+  name: product
+  node_relation:
+    schema_name: $source_schema
+    alias: product
+  defaults:
+    agg_time_dimension: listed_on
+  dimensions:
+    - name: listed_on
+      type: time
+      expr: created_at
+      type_params:
+        time_granularity: day
+    - name: category
+      type: categorical
+      expr: category
+    - name: brand
+      type: categorical
+      expr: brand
+  entities:
+    - name: product
+      type: primary
+      expr: product_id

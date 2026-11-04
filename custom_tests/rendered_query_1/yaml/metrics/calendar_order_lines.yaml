@@ -1,0 +1,10 @@
+metric:
+  name: calendar_order_lines
+  type: simple
+  type_params:
+    expr: "1"
+    metric_aggregation_params:
+      semantic_model: order_detail
+      agg: sum
+    join_to_timespine: true
+    fill_nulls_with: 0

@@ -1,0 +1,8 @@
+metric:
+  name: units_sold
+  type: simple
+  type_params:
+    expr: quantity
+    metric_aggregation_params:
+      semantic_model: order_detail
+      agg: sum

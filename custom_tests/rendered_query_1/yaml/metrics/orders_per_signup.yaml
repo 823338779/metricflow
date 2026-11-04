@@ -1,0 +1,8 @@
+metric:
+  name: orders_per_signup
+  type: ratio
+  type_params:
+    numerator:
+      name: order_lines
+    denominator:
+      name: user_signups
