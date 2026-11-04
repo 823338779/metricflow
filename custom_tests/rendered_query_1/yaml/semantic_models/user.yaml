@@ -1,20 +1,23 @@
 semantic_model:
-  name: merchandise_index
+  name: user
   node_relation:
     schema_name: $source_schema
-    alias: dim_products
+    alias: user
   defaults:
-    agg_time_dimension: cataloged_on
+    agg_time_dimension: registered_on
   dimensions:
-    - name: cataloged_on
+    - name: registered_on
       type: time
       expr: created_at
       type_params:
         time_granularity: day
-    - name: merchandise_class
+    - name: region
       type: categorical
-      expr: category
+      expr: region
+    - name: vip_flag
+      type: categorical
+      expr: is_vip
   entities:
-    - name: sku
+    - name: user
       type: primary
-      expr: product_id
+      expr: user_id

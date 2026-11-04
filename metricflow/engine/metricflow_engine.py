@@ -205,6 +205,7 @@ class MetricFlowQueryRequest:
         apply_group_by: bool = True,
         output_column_order_mode: Optional[OutputColumnOrderMode] = None,
     ) -> MetricFlowQueryRequest:
+        # 先保存用户输入并补齐默认选项；此时还没有查 manifest，也没有生成 SQL。
         return MetricFlowQueryRequest(
             request_id=MetricFlowRequestId(mf_rid=f"{mf_random_id()}") if request_id is None else request_id,
             saved_query_name=saved_query_name,
@@ -572,6 +573,7 @@ class MetricFlowEngine(AbstractMetricFlowEngine):
 
     def _create_execution_plan(self, mf_query_request: MetricFlowQueryRequest) -> MetricFlowExplainResult:
         # explain() 与 query() 共用此链路：请求 -> QuerySpec -> DataflowPlan -> SQL/ExecutionPlan。
+        # 重置节点和 SQL 别名的编号，使同一请求生成的编号尽量稳定，便于比较和调试。
         if self._reset_id_enumeration:
             logger.debug(
                 LazyFormat(

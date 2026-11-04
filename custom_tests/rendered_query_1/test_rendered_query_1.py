@@ -1,169 +1,252 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
-from pathlib import Path
 
 import pytest
-from metricflow_semantics.model.semantic_manifest_lookup import SemanticManifestLookup
-from metricflow_semantics.test_helpers.manifest_helpers import mf_load_manifest_from_yaml_directory
+from sqlglot import exp, parse_one
 
-from metricflow.engine.metricflow_engine import MetricFlowQueryRequest
+from metricflow.engine.metricflow_engine import MetricFlowExplainResult, MetricFlowQueryRequest
 from tests_metricflow.integration.conftest import IntegrationTestHelpers
 
+logger = logging.getLogger(__name__)
 
-@pytest.fixture(scope="session")
-def simple_semantic_manifest_lookup(template_mapping: dict[str, str]) -> SemanticManifestLookup:
-    """Load only the definitions needed by this query test."""
-    yaml_directory = Path(__file__).parent / "yaml"
-    return SemanticManifestLookup(mf_load_manifest_from_yaml_directory(yaml_directory, template_mapping))
+
+def _show_sql(result: MetricFlowExplainResult, capsys: pytest.CaptureFixture[str]) -> str:
+    """Print the SQL for debugger walkthroughs and omit plan comments from assertions."""
+    with capsys.disabled():
+        print(f"\n{result.sql_statement.sql}\n")
+    return result.sql_statement.without_descriptions.sql
+
+
+def _source_tables(sql: str, source_schema: str) -> set[str]:
+    """Find physical source tables, excluding generated CTE references."""
+    return {table.name for table in parse_one(sql, read="postgres").find_all(exp.Table) if table.db == source_schema}
+
+
+def _output_columns(sql: str) -> set[str]:
+    """Read the final projection without depending on generated aliases."""
+    select = parse_one(sql, read="postgres").find(exp.Select)
+    assert select is not None
+    return set(select.named_selects)
 
 
 def test_01_explain_simple_metric(
     it_helpers: IntegrationTestHelpers,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Render one simple metric without grouping."""
-    result = it_helpers.mf_engine.explain(MetricFlowQueryRequest.create(metric_names=["completed_purchases"]))
-    with capsys.disabled():
-        print("\n[01] simple metric")
-        print(result.sql_statement)
+    """单指标：订单明细数应从 order_detail 读取并对常量 1 求和."""
+    result = it_helpers.mf_engine.explain(MetricFlowQueryRequest.create(metric_names=["order_lines"]))
+    sql = _show_sql(result, capsys)
 
-    rendered_sql = result.sql_statement.sql
-    assert "SUM(1) AS completed_purchases" in rendered_sql
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail"}
+    assert _output_columns(sql) == {"order_lines"}
+    assert "SUM(1) AS order_lines" in sql
+    assert "GROUP BY" not in sql
+    assert "JOIN" not in sql
 
 
-def test_02_explain_simple_metric_by_day(
-    it_helpers: IntegrationTestHelpers, capsys: pytest.CaptureFixture[str]
+def test_02_explain_daily_metric(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Add a day grain to the same metric through metric_time."""
-    result = it_helpers.mf_engine.explain(
-        MetricFlowQueryRequest.create(metric_names=["completed_purchases"], group_by_names=["metric_time__day"])
-    )
-    with capsys.disabled():
-        print("\n[02] metric grouped by day")
-        print(result.sql_statement)
-
-    rendered_sql = result.sql_statement.sql
-    assert "DATE_TRUNC('day', ordered_at)" in rendered_sql
-    assert ".mf_time_spine" not in rendered_sql
-
-
-def test_03_explain_simple_metric_with_joined_dimension(
-    it_helpers: IntegrationTestHelpers, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Group orders by a dimension provided by the customer model."""
-    result = it_helpers.mf_engine.explain(
-        MetricFlowQueryRequest.create(metric_names=["completed_purchases"], group_by_names=["buyer__home_market"])
-    )
-    with capsys.disabled():
-        print("\n[03] joined dimension")
-        print(result.sql_statement)
-
-    rendered_sql = result.sql_statement.sql
-    assert "LEFT OUTER JOIN" in rendered_sql
-    assert "buyer__home_market" in rendered_sql
-
-
-def test_04_explain_ratio_metric(it_helpers: IntegrationTestHelpers, capsys: pytest.CaptureFixture[str]) -> None:
-    """Query order count, customer count, and their rate by region and day."""
+    """按天分组：metric_time 使用事实表的 ordered_at，并限制查询时间范围."""
     result = it_helpers.mf_engine.explain(
         MetricFlowQueryRequest.create(
-            metric_names=["completed_purchases", "buyer_signups", "purchase_signup_ratio"],
-            group_by_names=["buyer__home_market", "metric_time__day"],
-        )
-    )
-    with capsys.disabled():
-        print("\n[04] ratio metric")
-        print(result.sql_statement)
-
-    rendered_sql = result.sql_statement.sql
-    assert "NULLIF(" in rendered_sql
-    assert "AS purchase_signup_ratio" in rendered_sql
-    assert "AS completed_purchases" in rendered_sql
-    assert "AS buyer_signups" in rendered_sql
-    assert "buyer__home_market" in rendered_sql
-    assert "metric_time__day" in rendered_sql
-
-
-def test_05_explain_multiple_metric_types_with_filter_and_dimensions(
-    it_helpers: IntegrationTestHelpers, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Query simple, ratio, and derived metrics with dimensions and a filter."""
-    where_constraint = "{{ Dimension('buyer__vip_flag') }}"
-    result = it_helpers.mf_engine.explain(
-        MetricFlowQueryRequest.create(
-            metric_names=["completed_purchases", "buyer_signups", "purchase_signup_ratio", "purchase_index"],
-            group_by_names=["buyer__home_market", "buyer__vip_flag", "metric_time__day"],
-            where_constraints=[where_constraint],
-            dataflow_plan_optimizations=set(),
-        )
-    )
-    with capsys.disabled():
-        print("\n[05] multiple metric types")
-        print(result.sql_statement)
-
-    rendered_sql = result.sql_statement.sql
-    assert "WHERE buyer__vip_flag" in rendered_sql
-    assert "purchase_signup_ratio * 100" in rendered_sql
-
-
-def test_06_explain_three_table_join(it_helpers: IntegrationTestHelpers) -> None:
-    """Query item revenue and count by customer region and VIP status through orders."""
-    result = it_helpers.mf_engine.explain(
-        MetricFlowQueryRequest.create(
-            metric_names=["gross_sales", "line_entries"],
-            group_by_names=["purchase__buyer__home_market", "purchase__buyer__vip_flag"],
-        )
-    )
-
-    rendered_sql = result.sql_statement.sql
-    assert rendered_sql.count("LEFT OUTER JOIN") == 2
-    assert "fct_order_items" in rendered_sql
-    assert "fct_orders" in rendered_sql
-    assert "dim_customers" in rendered_sql
-    assert "purchase__buyer__home_market" in rendered_sql
-    assert "purchase__buyer__vip_flag" in rendered_sql
-    assert "AS gross_sales" in rendered_sql
-    assert "AS line_entries" in rendered_sql
-
-
-def test_07_explain_four_table_join(it_helpers: IntegrationTestHelpers) -> None:
-    """Query item revenue and count by customer region and product category."""
-    result = it_helpers.mf_engine.explain(
-        MetricFlowQueryRequest.create(
-            metric_names=["gross_sales", "line_entries"],
-            group_by_names=["purchase__buyer__home_market", "sku__merchandise_class"],
-        )
-    )
-
-    rendered_sql = result.sql_statement.sql
-    assert rendered_sql.count("LEFT OUTER JOIN") == 3
-    assert "fct_order_items" in rendered_sql
-    assert "fct_orders" in rendered_sql
-    assert "dim_customers" in rendered_sql
-    assert "dim_products" in rendered_sql
-    assert "purchase__buyer__home_market" in rendered_sql
-    assert "sku__merchandise_class" in rendered_sql
-    assert "AS gross_sales" in rendered_sql
-    assert "AS line_entries" in rendered_sql
-
-
-def test_08_explain_daily_orders_with_time_spine(it_helpers: IntegrationTestHelpers) -> None:
-    """Compare daily filled and raw order counts by day and customer region."""
-    result = it_helpers.mf_engine.explain(
-        MetricFlowQueryRequest.create(
-            metric_names=["calendar_purchases", "completed_purchases"],
-            group_by_names=["metric_time__day", "buyer__home_market"],
+            metric_names=["order_lines"],
+            group_by_names=["metric_time__day"],
             time_constraint_start=datetime(2024, 1, 1),
             time_constraint_end=datetime(2024, 1, 7),
         )
     )
+    sql = _show_sql(result, capsys)
 
-    rendered_sql = result.sql_statement.sql
-    assert ".mf_time_spine" in rendered_sql
-    assert "fct_orders" in rendered_sql
-    assert "LEFT OUTER JOIN" in rendered_sql
-    assert "COALESCE" in rendered_sql
-    assert "AS calendar_purchases" in rendered_sql
-    assert "AS completed_purchases" in rendered_sql
-    assert "buyer__home_market" in rendered_sql
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail"}
+    assert _output_columns(sql) == {"metric_time__day", "order_lines"}
+    assert "ordered_at" in sql
+    assert "DATE_TRUNC('day'," in sql
+    assert "GROUP BY" in sql
+    assert "2024-01-01" in sql
+    assert "2024-01-07" in sql
+
+
+def test_03_explain_linked_dimension(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """关联维度：按用户地区汇总订单明细，需要通过 user_id 连接 user."""
+    result = it_helpers.mf_engine.explain(
+        MetricFlowQueryRequest.create(metric_names=["order_lines"], group_by_names=["user__region"])
+    )
+    sql = _show_sql(result, capsys)
+
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail", "user"}
+    assert _output_columns(sql) == {"user__region", "order_lines"}
+    assert "LEFT OUTER JOIN" in sql
+    assert "user_id" in sql
+    assert "GROUP BY" in sql
+
+
+def test_04_explain_cross_source_ratio(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """跨源比率：分别聚合订单明细数和注册数，再按日期与用户地区对齐."""
+    result = it_helpers.mf_engine.explain(
+        MetricFlowQueryRequest.create(
+            metric_names=["orders_per_signup"],
+            group_by_names=["metric_time__day", "user__region"],
+        )
+    )
+    sql = _show_sql(result, capsys)
+
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail", "user"}
+    assert _output_columns(sql) == {"metric_time__day", "user__region", "orders_per_signup"}
+    assert "ordered_at" in sql
+    assert "created_at" in sql
+    assert "FULL OUTER JOIN" in sql
+    assert "order_lines" in sql
+    assert "user_signups" in sql
+    assert "/" in sql
+    assert "NULLIF(user_signups, 0)" in sql
+
+
+def test_05_explain_derived_metric_with_filter(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """派生指标：比率乘以 100，且两个基础指标都应用用户地区过滤."""
+    result = it_helpers.mf_engine.explain(
+        MetricFlowQueryRequest.create(
+            metric_names=["signup_index"],
+            group_by_names=["user__region"],
+            where_constraints=["{{ Dimension('user__region') }} = 'east'"],
+        )
+    )
+    sql = _show_sql(result, capsys)
+
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail", "user"}
+    assert _output_columns(sql) == {"user__region", "signup_index"}
+    assert "orders_per_signup * 100" in sql
+    assert "NULLIF" in sql
+    # 两条聚合分支必须各自过滤，不能只筛分子或分母。
+    assert sql.count("user__region = 'east'") == 2
+
+
+def test_06_explain_three_table_join(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """三表关联：按用户地区和商品类别汇总订单收入."""
+    result = it_helpers.mf_engine.explain(
+        MetricFlowQueryRequest.create(
+            metric_names=["gross_revenue"],
+            group_by_names=["user__region", "product__category"],
+        )
+    )
+    sql = _show_sql(result, capsys)
+
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail", "user", "product"}
+    assert _output_columns(sql) == {"user__region", "product__category", "gross_revenue"}
+    assert sql.count("LEFT OUTER JOIN") == 2
+    assert "line_amount" in sql
+    assert "user_id" in sql
+    assert "product_id" in sql
+    aggregates = tuple(parse_one(sql, read="postgres").find_all(exp.Sum))
+    assert len(aggregates) == 1
+    assert aggregates[0].this.name == "line_amount"
+
+
+def test_07_explain_four_table_join(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """四表关联：按用户、商品和门店维度同时汇总明细数、收入与销量."""
+    result = it_helpers.mf_engine.explain(
+        MetricFlowQueryRequest.create(
+            metric_names=["order_lines", "gross_revenue", "units_sold"],
+            group_by_names=["user__region", "product__category", "store__city"],
+        )
+    )
+    sql = _show_sql(result, capsys)
+
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail", "user", "product", "store"}
+    assert _output_columns(sql) == {
+        "user__region",
+        "product__category",
+        "store__city",
+        "order_lines",
+        "gross_revenue",
+        "units_sold",
+    }
+    assert sql.count("LEFT OUTER JOIN") == 3
+    assert "line_amount" in sql
+    assert "quantity" in sql
+    assert "store_id" in sql
+    assert {aggregate.this.name for aggregate in parse_one(sql, read="postgres").find_all(exp.Sum)} == {
+        "__order_lines",
+        "__gross_revenue",
+        "__units_sold",
+    }
+
+
+def test_08_explain_daily_orders_with_time_spine(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """时间脊：对比普通订单明细数和按天连接时间脊、将空值补零的指标."""
+    result = it_helpers.mf_engine.explain(
+        MetricFlowQueryRequest.create(
+            metric_names=["order_lines", "calendar_order_lines"],
+            group_by_names=["metric_time__day", "user__region"],
+            time_constraint_start=datetime(2024, 1, 1),
+            time_constraint_end=datetime(2024, 1, 7),
+        )
+    )
+    sql = _show_sql(result, capsys)
+
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail", "user", "mf_time_spine"}
+    assert _output_columns(sql) == {"metric_time__day", "user__region", "order_lines", "calendar_order_lines"}
+    assert "LEFT OUTER JOIN" in sql
+    assert any(
+        coalesce.this.name == "__calendar_order_lines" and coalesce.expressions == [exp.Literal.number(0)]
+        for coalesce in parse_one(sql, read="postgres").find_all(exp.Coalesce)
+    )
+    assert "2024-01-01" in sql
+    assert "2024-01-07" in sql
+
+
+def test_09_explain_fact_dimension_and_linked_filter(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """联合过滤：筛选已支付且用户为 VIP 的明细，按状态、VIP 与门店类型汇总收入."""
+    result = it_helpers.mf_engine.explain(
+        MetricFlowQueryRequest.create(
+            metric_names=["gross_revenue"],
+            group_by_names=[
+                "order_line__order_status",
+                "user__vip_flag",
+                "store__store_type",
+            ],
+            where_constraints=[
+                "{{ Dimension('order_line__order_status') }} = 'paid'",
+                "{{ Dimension('user__vip_flag') }}",
+            ],
+        )
+    )
+    sql = _show_sql(result, capsys)
+
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail", "user", "store"}
+    assert _output_columns(sql) == {
+        "order_line__order_status",
+        "user__vip_flag",
+        "store__store_type",
+        "gross_revenue",
+    }
+    assert sql.count("LEFT OUTER JOIN") == 2
+    assert "line_amount" in sql
+    assert "is_vip" in sql
+    where = parse_one(sql, read="postgres").find(exp.Where)
+    assert where is not None
+    assert where.this == parse_one("(order_line__order_status = 'paid') AND (user__vip_flag)", read="postgres")

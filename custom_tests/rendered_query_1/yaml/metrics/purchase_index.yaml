@@ -1,7 +1,0 @@
-metric:
-  name: purchase_index
-  type: derived
-  type_params:
-    expr: "purchase_signup_ratio * 100"
-    metrics:
-      - name: purchase_signup_ratio

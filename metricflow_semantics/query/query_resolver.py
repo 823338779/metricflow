@@ -189,8 +189,10 @@ class MetricFlowQueryResolver:
         self, spec_pattern: SpecPattern, available_metric_specs: Sequence[MetricSpec]
     ) -> List[MetricSpec]:
         start_time = time.perf_counter()
+        # 用输入的匹配条件筛候选，例如只保留引用名称为 gross_revenue 的 MetricSpec。
         matching_specs = set(spec_pattern.match(available_metric_specs))
 
+        # 再按候选原有顺序收集，避免集合改变输出顺序。
         filtered_metric_specs: List[MetricSpec] = []
         for metric_spec in available_metric_specs:
             if metric_spec in matching_specs:
@@ -209,6 +211,8 @@ class MetricFlowQueryResolver:
         The order of outputs should be the same as the order of inputs.
         """
         # Build a list of metrics that are available from the manifest.
+        # 这里遍历 manifest 的全部指标，生成候选 Spec；metric_inputs 只含本次请求的指标。
+        # Spec 是指标引用，不包含完整的 YAML 定义，也不在这里执行聚合。
         available_metric_specs = tuple(
             MetricSpec.from_reference(metric_reference)
             for metric_reference in self._manifest_lookup.metric_lookup.metric_references
@@ -222,6 +226,7 @@ class MetricFlowQueryResolver:
             matching_specs = self._resolve_metric_input(
                 spec_pattern=metric_input.spec_pattern, available_metric_specs=available_metric_specs
             )
+            # 必须唯一匹配，才能确定用户要查哪个指标；例如第九个用例的 gross_revenue。
             if len(matching_specs) == 1:
                 matching_spec = matching_specs[0]
                 alias = metric_input.alias
@@ -231,6 +236,7 @@ class MetricFlowQueryResolver:
                 resolved_name = matching_spec.alias or matching_spec.dunder_name
                 alias_to_metrics[resolved_name].append((metric_input, matching_spec.reference))
             else:
+                # 没匹配到或匹配不唯一时，记录问题和候选建议，交给调用方统一处理。
                 suggestion_generator = QueryItemSuggestionGenerator(
                     input_naming_scheme=MetricNamingScheme(),
                     input_str=str(metric_input.input_obj),
@@ -249,6 +255,7 @@ class MetricFlowQueryResolver:
                     )
                 )
 
+        # 同时返回匹配成功的指标和输入问题；这个方法包含匹配、校验，不只是数据打包。
         return ResolveMetricsResult(
             metric_specs=tuple(metric_specs),
             input_to_issue_set_mapping=InputToIssueSetMapping(items=tuple(input_to_issue_set_mapping_items)),
@@ -451,6 +458,7 @@ class MetricFlowQueryResolver:
     @mf_log_duration()
     def resolve_query(self, resolver_input_for_query: ResolverInputForQuery) -> MetricFlowQueryResolution:
         """Resolve the query into specs that can be passed into the next stage in query processing."""
+        # 给整份输入的各部分取局部变量名，仍引用原来的对象，没有重新解析或复制。
         metric_inputs = resolver_input_for_query.metric_inputs
         group_by_item_inputs = resolver_input_for_query.group_by_item_inputs
         order_by_item_inputs = resolver_input_for_query.order_by_item_inputs
@@ -459,13 +467,16 @@ class MetricFlowQueryResolver:
         min_max_only_input = resolver_input_for_query.min_max_only
         apply_group_by_input = resolver_input_for_query.apply_group_by
 
+        # 收集各阶段的“哪个输入出了什么问题”，稍后汇总并决定是否继续解析。
         mappings_to_merge: List[InputToIssueSetMapping] = []
 
         # Resolve metrics.
         resolve_metrics_result = self._resolve_metric_inputs(
             metric_inputs=metric_inputs,
+            # 这是报告解析问题的上下文路径，不是数据库表的 JOIN 路径。
             query_resolution_path=MetricFlowQueryResolutionPath.empty_instance(),
         )
+        # 保存问题信息，并取出已匹配的指标 Spec，供后面的分组、过滤校验使用。
         mappings_to_merge.append(resolve_metrics_result.input_to_issue_set_mapping)
         metric_specs = resolve_metrics_result.metric_specs
 

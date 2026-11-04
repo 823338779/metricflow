@@ -1,0 +1,23 @@
+semantic_model:
+  name: store
+  node_relation:
+    schema_name: $source_schema
+    alias: store
+  defaults:
+    agg_time_dimension: opened_on
+  dimensions:
+    - name: opened_on
+      type: time
+      expr: opened_at
+      type_params:
+        time_granularity: day
+    - name: city
+      type: categorical
+      expr: city
+    - name: store_type
+      type: categorical
+      expr: store_type
+  entities:
+    - name: store
+      type: primary
+      expr: store_id

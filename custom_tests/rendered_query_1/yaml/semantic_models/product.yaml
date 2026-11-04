@@ -1,23 +1,23 @@
 semantic_model:
-  name: buyer_registry
+  name: product
   node_relation:
     schema_name: $source_schema
-    alias: dim_customers
+    alias: product
   defaults:
-    agg_time_dimension: joined_on
+    agg_time_dimension: listed_on
   dimensions:
-    - name: joined_on
+    - name: listed_on
       type: time
       expr: created_at
       type_params:
         time_granularity: day
-    - name: home_market
+    - name: category
       type: categorical
-      expr: region
-    - name: vip_flag
+      expr: category
+    - name: brand
       type: categorical
-      expr: is_vip
+      expr: brand
   entities:
-    - name: buyer
+    - name: product
       type: primary
-      expr: customer_id
+      expr: product_id

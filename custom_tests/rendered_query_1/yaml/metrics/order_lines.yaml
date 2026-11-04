@@ -1,8 +1,8 @@
 metric:
-  name: gross_sales
+  name: order_lines
   type: simple
   type_params:
-    expr: line_amount
+    expr: "1"
     metric_aggregation_params:
-      semantic_model: basket_lines
+      semantic_model: order_detail
       agg: sum
