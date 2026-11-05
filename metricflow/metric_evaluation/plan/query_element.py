@@ -89,6 +89,7 @@ class MetricQueryPropertySet(MetricFlowPrettyFormattable):
     同一 SQL 查询可合并的条件：分组项和过滤条件的下推状态需要兼容。
     """
 
+    # 查询属性不包含指标身份；它由分组项和下推状态共同组成，描述指标所在的查询上下文。
     # 指标应输出在哪个粒度。构建器据此要求源节点提供这些可关联项并确定 GROUP BY；
     # 它也参与查询元素分组，避免把不同粒度的指标放进同一计算节点。
     group_by_item_specs: FrozenOrderedSet[LinkableInstanceSpec]
@@ -101,6 +102,7 @@ class MetricQueryPropertySet(MetricFlowPrettyFormattable):
         group_by_item_specs: Iterable[LinkableInstanceSpec], predicate_pushdown_state: PredicatePushdownState
     ) -> MetricQueryPropertySet:
         """Create properties that define whether query elements can be composed together."""
+        # 固定分组项集合并保留顺序，连同不可变下推状态作为查询元素相等性判断的一部分。
         return MetricQueryPropertySet(
             group_by_item_specs=FrozenOrderedSet.from_iterable(group_by_item_specs),
             predicate_pushdown_state=predicate_pushdown_state,
@@ -137,6 +139,8 @@ class MetricQueryElement:
     可把它看作“一个 MetricSpec + 计算它时所需的分组和过滤上下文”。
     """
 
+    # DFS 以整个不可变查询元素为缓存键：MetricSpec 与 query_properties 都相等才直接复用。
+    # 同名指标若筛选、别名、偏移、分组或下推状态不同，不能仅凭名称当作同一个输入。
     # 此查询元素的目标指标；与 query_properties 一起决定它能否与其他元素共用求值节点。
     metric_spec: MetricSpec
     # 目标指标所处的粒度和过滤上下文；依赖指标可以沿边继承或调整这些条件。
@@ -149,6 +153,8 @@ class MetricQueryElement:
         predicate_pushdown_state: PredicatePushdownState,
     ) -> MetricQueryElement:
         """Create a query element for a metric with the associated query properties."""
+        # 例如 signup_index 与 orders_per_signup 可共享查询属性，但规格不同，仍是两个查询元素。
+        # 从不同父项遇到完全相同的 orders_per_signup 查询元素时，DFS 才复用其已完成节点。
         return MetricQueryElement(
             metric_spec=metric_spec,
             query_properties=MetricQueryPropertySet.create(

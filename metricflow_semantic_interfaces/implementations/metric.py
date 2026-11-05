@@ -282,18 +282,23 @@ class PydanticMetric(HashableBaseModel, ModelWithMetadataParsing, ProtocolHint[M
     @property
     def input_metrics(self) -> Sequence[PydanticMetricInput]:
         """Return the associated input metrics for this metric."""
+        # 返回定义层的一层直接输入，不是递归展开后的所有叶子指标，也不附加查询级筛选。
+        # 当前实现先将简单、累计和转化指标视为无可展开输入，与 DFS 的叶子节点边界一致。
         if self.type is MetricType.SIMPLE or self.type is MetricType.CUMULATIVE or self.type is MetricType.CONVERSION:
             return ()
         elif self.type is MetricType.DERIVED:
+            # 派生指标按定义顺序返回 metrics；signup_index 的直接输入只有 orders_per_signup。
             # There should always be input metrics for derived metrics, and this gets validated at parse time. Don't
             # error here for lack of input metrics or it will disrupt the validation flow.
             return self.type_params.metrics or []
         elif self.type is MetricType.RATIO:
+            # 比率指标固定按分子、分母返回；orders_per_signup 对应 order_lines、user_signups。
             assert (
                 self.type_params.numerator is not None and self.type_params.denominator is not None
             ), f"{self} is metric type {MetricType.RATIO}, so neither the numerator and denominator should not be None"
             return (self.type_params.numerator, self.type_params.denominator)
         elif self.type is MetricType.CONVERSION:
+            # 当前前置分支已返回空序列，此历史分支不会执行；这里只记录现状，不改变已有行为。
             conversion_type_params = PydanticMetric.get_checked_conversion_type_params(metric=self)
             metrics: Set[PydanticMetricInput] = set()
             if conversion_type_params.base_metric is not None:

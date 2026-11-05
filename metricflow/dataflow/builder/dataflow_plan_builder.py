@@ -259,7 +259,8 @@ class DataflowPlanBuilder:
             custom_grain_names=self._semantic_model_lookup.custom_granularity_names,
         )
 
-        # 用户请求的过滤条件，转换成可放入各指标查询元素中的过滤 Spec。
+        # 按本次查询的指标集合确定筛选作用域，将请求中的交集条件解析为过滤规格；
+        # 作用域用于查找筛选项的解析结果，不代表这些条件已经在数据源执行。
         query_level_filter_specs = tuple(
             filter_spec_factory.create_from_where_filter_intersection(
                 filter_location=WhereFilterLocation.for_query(
@@ -269,14 +270,16 @@ class DataflowPlanBuilder:
             )
         )
 
-        # 记录过滤下推能力和时间范围；后续构建数据流节点时持续传递。
+        # 初始状态只允许时间范围下推；普通 WHERE 条件仍放在下面的指标规格中，
+        # 并未放进此状态或启用维度条件下推，具体应用位置留给后续数据流构建。
         predicate_pushdown_state = PredicatePushdownState.create(
             time_range_constraint=query_spec.time_range_constraint,
             where_filter_specs=(),
             pushdown_enabled_types=frozenset({PredicateInputType.TIME_RANGE_CONSTRAINT}),
         )
 
-        # 为本次计划创建带查询级过滤条件的指标引用，不修改用户原始的 QuerySpec。
+        # 为每个请求指标创建附带查询级筛选的 MetricSpec，不修改原始 QuerySpec；
+        # 此时还没有展开指标定义中的输入依赖、定义级筛选或输入级筛选。
         metric_specs = tuple(
             MetricSpec.create(
                 element_name=metric_spec.element_name,
@@ -285,6 +288,7 @@ class DataflowPlanBuilder:
             for metric_spec in query_spec.metric_specs
         )
 
+        # 用去除输出别名的维度、时间维度和实体规格确定计算粒度，避免别名干扰分组复用。
         group_by_item_specs_without_aliases = query_spec.linkable_specs.without_aliases
 
         if me_plan_override is None:
@@ -302,7 +306,8 @@ class DataflowPlanBuilder:
                     column_association_resolver=self._column_association_resolver,
                 )
 
-            # 展开 ratio/derived 等指标依赖，生成 MetricQueryNode 与依赖边组成的图。
+            # 交给所选规划器的是指标规格、分组粒度、下推状态及按作用域解析筛选的工厂。
+            # DFS 分支会展开 ratio/derived 的直接依赖；返回的仍是指标依赖图，尚非数据流或 SQL。
             me_plan_override = me_planner.build_plan(
                 metric_specs=metric_specs,
                 group_by_item_specs=group_by_item_specs_without_aliases.as_tuple,

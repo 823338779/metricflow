@@ -58,9 +58,12 @@ class MetricEvaluationPlanner(ABC):
         filter_spec_factory: WhereFilterSpecFactory,
     ) -> Sequence[MetricSpec]:
         """For a metric that has input metrics (e.g. derived), return the metric specs for the input."""
+        # 读取当前父指标定义，只展开 input_metrics 给出的直接输入；递归顺序由 DFS 主循环负责。
+        # signup_index 得到 orders_per_signup，下一层 orders_per_signup 才得到分子和分母。
         metric = self._manifest_object_lookup.get_metric(metric_name)
 
         # This is the filter that's defined for the metric in the configs.
+        # 父指标定义上的筛选按该指标作用域解析，随后附加到每个直接输入规格上。
         metric_definition_filter_specs = filter_spec_factory.create_from_where_filter_intersection(
             filter_location=WhereFilterLocation.for_metric(MetricReference(element_name=metric_name)),
             filter_intersection=metric.filter,
@@ -69,6 +72,7 @@ class MetricEvaluationPlanner(ABC):
         input_metric_specs: list[MetricSpec] = []
 
         for input_metric in metric.input_metrics:
+            # 每个输入引用自己的筛选使用输入指标作用域解析，与父指标定义的筛选分开收集。
             where_filter_specs = list(
                 filter_spec_factory.create_from_where_filter_intersection(
                     filter_location=WhereFilterLocation.for_input_metric(
@@ -77,9 +81,12 @@ class MetricEvaluationPlanner(ABC):
                     filter_intersection=input_metric.filter,
                 )
             )
+            # 输入规格最终携带：输入引用筛选 + 父指标定义筛选 + 外层传入筛选。
+            # 外层通常来自查询或更上层指标；当前父项有时间偏移时，DFS 会停止传播那部分筛选。
             where_filter_specs.extend(metric_definition_filter_specs)
             where_filter_specs.extend(additional_filter_specs)
 
+            # offset_to_grain 只接受标准时间粒度；偏移属于当前输入引用，不直接复制父项的偏移。
             input_metric_offset_to_grain: Optional[TimeGranularity] = None
             if input_metric.offset_to_grain is not None:
                 input_metric_offset_to_grain = error_if_not_standard_grain(
@@ -87,6 +94,7 @@ class MetricEvaluationPlanner(ABC):
                     input_granularity=input_metric.offset_to_grain,
                 )
 
+            # 保留输入名称、表达式别名、窗口偏移和粒度偏移，组成后续求值与节点复用的完整规格。
             spec = MetricSpec.create(
                 element_name=input_metric.name,
                 where_filter_specs=where_filter_specs,

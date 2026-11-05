@@ -52,6 +52,10 @@ class MetricQueryDependencyEdge(MetricFlowGraphEdge[MetricQueryNode]):
         source_node_output_spec: MetricSpec,
     ) -> MetricQueryDependencyEdge:
         """Create an edge from a target node to one of its source dependency nodes."""
+        # 依赖图约定：使用输入的 target 是尾端，提供输入的 source 是头端，箭头为 target -> source。
+        # 例如 signup_index -> orders_per_signup，再由后者分别指向 order_lines 和 user_signups；
+        # 每条边仅描述一层直接依赖，不把孙级依赖直接连到 signup_index。
+        # 两端规格标明“哪个输出依赖哪个输入”；顶层透传边的两端规格相同，数据供给方向与箭头相反。
         return MetricQueryDependencyEdge(
             tail_node=target_node,
             target_node_output_spec=target_node_output_spec,

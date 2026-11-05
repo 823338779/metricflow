@@ -42,10 +42,13 @@ class MetricQueryHelper:
         * If there are any references to a time dimension at a custom time grain, we need to get the time dimension at
         the custom grain and then map it to the custom grain.
         """
+        # 时间偏移后才应用的筛选仍需要访问其维度，因此收集筛选引用的全部可关联项。
         group_by_specs_referenced_in_filters: MutableOrderedSet[LinkableInstanceSpec] = MutableOrderedSet(
             itertools.chain.from_iterable(filter_spec.linkable_specs for filter_spec in filter_specs)
         )
 
+        # 实际取“请求分组项与筛选引用项”的并集并按顺序去重；不是两者的交集。
+        # 这些额外分组项服务于偏移后的筛选，后续可再聚合回用户请求的粒度。
         required_group_by_specs: MutableOrderedSet[LinkableInstanceSpec] = MutableOrderedSet(
             itertools.chain(
                 queried_group_by_specs,
@@ -59,11 +62,13 @@ class MetricQueryHelper:
         )
 
         # Custom grains require joining to their base grain, so add base grain to extraneous specs.
+        # 自定义时间粒度还需要基础粒度用于关联，保留自定义规格的同时补充基础规格。
         if len(required_time_dimension_specs_with_custom_grain) > 0:
             required_group_by_specs.update(
                 spec.with_base_grain() for spec in required_time_dimension_specs_with_custom_grain
             )
 
+        # 返回输入需要保留的分组规格，不在这里执行偏移、过滤或聚合。
         return required_group_by_specs
 
     def split_filters_by_aggregation_time_dimension_references(
