@@ -37,7 +37,7 @@ YAML 直接加载成内存 Semantic Manifest，不生成 dbt 的 `target/manifes
 `order_lines` 统计订单明细行，不是去重订单数；`orders_per_signup` 是明细行数 / 注册数，
 不代表用户转化率或注册 cohort 的后续购买率。
 
-## 九个递进场景
+## 十个递进场景
 
 1. 单指标：订单明细数，`SUM(1)`。
 2. 按天分组：使用订单时间，并添加日期范围。
@@ -48,6 +48,38 @@ YAML 直接加载成内存 Semantic Manifest，不生成 dbt 的 `target/manifes
 7. 四表关联：加入门店，同时查询明细数、收入和销量。
 8. 时间脊：对比普通指标和日粒度补零指标。
 9. 联合过滤：已支付且用户为 VIP，按订单状态、VIP 标记、门店类型汇总收入。
+10. 综合报表：按地区、日期、VIP 标记查询全部七个指标，组合时间范围、地区与 VIP
+    过滤、升降序排序、前 20 行限制和按请求顺序输出列。
+
+### case10 的学习路线
+
+入口是 `test_10_explain_comprehensive_metric_query`，业务场景是 2024-01-01 至
+2024-01-07 的 east / west 地区 VIP 用户每日订单与注册报表。它显式使用 SQL 优化等级
+`O5`，并通过 `INPUT_ORDER` 保留“地区、日期、VIP、各指标”的列顺序。
+
+从指标定义看，依赖关系如下（实际求值节点可能将多个简单指标合并在一个节点中）：
+
+```text
+顶层查询
+├── signup_index
+│   └── orders_per_signup
+│       ├── order_lines
+│       └── user_signups
+├── orders_per_signup（也直接输出）
+├── order_lines / user_signups（也直接输出）
+├── gross_revenue / units_sold
+└── calendar_order_lines（连接时间脊并补零）
+```
+
+可依次观察：指标依赖与复用 → 订单、注册分支选源 → 用户维度关联与过滤 →
+订单时间 `ordered_at` / 注册时间 `created_at` 对齐到 `metric_time__day` →
+时间脊与补零 → 各分支聚合和对齐 → 比率及派生表达式 → 输出排序、限行和列顺序。
+排序为日期升序、收入降序、地区升序；`limit=20` 限制最终报表行数。
+
+该查询只能使用订单与注册分支共同支持的用户维度，不能同时加入订单状态、商品和门店
+维度；这些由 case07、case09 覆盖。普通指标查询也不适合同时启用维度值查询专用的
+`min_max_only` 等模式。累计、转化、时间偏移、别名和 saved query 等未在本例覆盖，
+不能将此用例视为所有参数组合的完整覆盖。时间脊补零也不保证每个地区每天都有一行。
 
 时间脊用例只验证生成的日期连接与补零 SQL，不承诺每个地区每天都有一行零值。
 这些是 SQL 生成测试，不是数据库执行或数据正确性测试。
@@ -59,6 +91,7 @@ YAML 直接加载成内存 Semantic Manifest，不生成 dbt 的 `target/manifes
 ```bash
 hatch run dev-env:pytest custom_tests/rendered_query_1/test_rendered_query_1.py
 hatch run dev-env:pytest custom_tests/rendered_query_1/test_rendered_query_1.py::test_09_explain_fact_dimension_and_linked_filter
+hatch run dev-env:pytest custom_tests/rendered_query_1/test_rendered_query_1.py::test_10_explain_comprehensive_metric_query
 ```
 
 PyCharm 选择 Hatch `dev-env` 的 Python 解释器，工作目录设为仓库根目录，

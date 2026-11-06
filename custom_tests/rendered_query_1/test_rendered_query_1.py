@@ -6,7 +6,8 @@ from datetime import datetime
 import pytest
 from sqlglot import exp, parse_one
 
-from metricflow.engine.metricflow_engine import MetricFlowExplainResult, MetricFlowQueryRequest
+from metricflow.engine.metricflow_engine import MetricFlowExplainResult, MetricFlowQueryRequest, OutputColumnOrderMode
+from metricflow.sql.optimizer.optimization_levels import SqlOptimizationLevel
 from tests_metricflow.integration.conftest import IntegrationTestHelpers
 
 logger = logging.getLogger(__name__)
@@ -250,3 +251,83 @@ def test_09_explain_fact_dimension_and_linked_filter(
     where = parse_one(sql, read="postgres").find(exp.Where)
     assert where is not None
     assert where.this == parse_one("(order_line__order_status = 'paid') AND (user__vip_flag)", read="postgres")
+
+
+def test_10_explain_comprehensive_metric_query(
+    it_helpers: IntegrationTestHelpers,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """综合查询：每日地区 VIP 报表，覆盖多指标依赖、时间脊、过滤、排序和限行."""
+    # signup_index -> orders_per_signup -> order_lines / user_signups。
+    # 同时直接查询依赖指标，便于观察求值图中的共享依赖和数据流分支复用。
+    metric_names = (
+        "signup_index",
+        "orders_per_signup",
+        "gross_revenue",
+        "units_sold",
+        "order_lines",
+        "user_signups",
+        "calendar_order_lines",
+    )
+    # 订单和注册分支都能访问这些维度；订单状态、商品和门店维度不适用于注册分支。
+    # 故意把时间维度放在中间，验证 INPUT_ORDER 保留请求顺序。
+    group_by_names = ("user__region", "metric_time__day", "user__vip_flag")
+    result = it_helpers.mf_engine.explain(
+        MetricFlowQueryRequest.create(
+            metric_names=metric_names,
+            group_by_names=group_by_names,
+            time_constraint_start=datetime(2024, 1, 1),
+            time_constraint_end=datetime(2024, 1, 7),
+            where_constraints=[
+                "{{ Dimension('user__region') }} IN ('east', 'west')",
+                "{{ Dimension('user__vip_flag') }}",
+            ],
+            order_by_names=["metric_time__day", "-gross_revenue", "user__region"],
+            limit=20,
+            output_column_order_mode=OutputColumnOrderMode.INPUT_ORDER,
+            sql_optimization_level=SqlOptimizationLevel.O5,
+        )
+    )
+    sql = _show_sql(result, capsys)
+    query = parse_one(sql, read="postgres")
+
+    assert _source_tables(sql, it_helpers.source_schema) == {"order_detail", "user", "mf_time_spine"}
+    assert tuple(query.named_selects) == group_by_names + metric_names
+    assert "ordered_at" in sql
+    assert "created_at" in sql
+    assert "2024-01-01" in sql
+    assert "2024-01-07" in sql
+    assert "DATE_TRUNC('day'," in sql
+    assert query.find(exp.Group) is not None
+    assert "LEFT OUTER JOIN" in sql
+    assert "FULL OUTER JOIN" in sql
+    assert "line_amount" in sql
+    assert "quantity" in sql
+    assert "orders_per_signup * 100" in sql
+    assert "NULLIF(user_signups, 0)" in sql
+    assert any(
+        coalesce.this.name == "__calendar_order_lines" and coalesce.expressions == [exp.Literal.number(0)]
+        for coalesce in query.find_all(exp.Coalesce)
+    )
+
+    # 查询级过滤需要进入订单和注册分支；不绑定优化器合并分支后的精确出现次数。
+    filtered_branches = tuple(where for where in query.find_all(exp.Where) if where.find(exp.In) is not None)
+    assert len(filtered_branches) >= 2
+    for where in filtered_branches:
+        region_filter = where.find(exp.In)
+        assert region_filter is not None
+        assert region_filter.this.name == "user__region"
+        assert region_filter.expressions == [exp.Literal.string("east"), exp.Literal.string("west")]
+        assert "user__vip_flag" in {column.name for column in where.find_all(exp.Column)}
+
+    # 排序与 LIMIT 必须作用于最终报表，而不是任意一个内部子查询。
+    order = query.args.get("order")
+    assert order is not None
+    assert [(item.this.name, bool(item.args.get("desc"))) for item in order.expressions] == [
+        ("metric_time__day", False),
+        ("gross_revenue", True),
+        ("user__region", False),
+    ]
+    limit = query.args.get("limit")
+    assert limit is not None
+    assert limit.expression == exp.Literal.number(20)
