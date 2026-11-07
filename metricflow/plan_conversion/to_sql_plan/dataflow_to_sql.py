@@ -283,6 +283,8 @@ class DataflowToSqlPlanConverter:
         dataflow_plan_node: DataflowPlanNode,
     ) -> FrozenSet[DataflowPlanNode]:
         """Handles logic for selecting which nodes to convert to CTEs based on the request."""
+        # 按已有 DAG 的路径共享关系选择 CTE，不消除语义冗余依赖，也不保证数据库物化。
+        # 从公共分支到 CTE：[[../../../算法讲解/cte-寻找公共分支.md]] 的“从选择结果到 CTE”一节。
         dataflow_plan = dataflow_plan_node.as_plan()
         nodes_to_convert_to_cte: Set[DataflowPlanNode] = DataflowPlanAnalyzer.find_common_branches(dataflow_plan)
         # Additional nodes will be added later.

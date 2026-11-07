@@ -31,6 +31,8 @@ class DataflowPlanAnalyzer:
             Nodes that are the "largest" shared branch roots for each level of shared
             structure discovered from the sink toward source nodes.
         """
+        # 外层迭代图解：[[../../算法讲解/cte-寻找公共分支.md]] 的“外层为什么还要迭代”一节。
+        # 每轮按新的分支起点重新计数，累计的是选中的分支根，不是第一轮所有重复节点。
         all_common_branches: MutableOrderedSet[DataflowPlanNode] = MutableOrderedSet()
         branch_roots_to_scan: OrderedSet[DataflowPlanNode] = MutableOrderedSet([dataflow_plan.sink_node])
 
@@ -57,17 +59,21 @@ class DataflowPlanAnalyzer:
     @staticmethod
     def _find_largest_common_branches(nodes: OrderedSet[DataflowPlanNode]) -> OrderedSet[DataflowPlanNode]:
         """Return shared nodes that are closest to the sink among `nodes` and their parents."""
+        # 从本轮起点沿所有上游路径计数，不按 visited 去重；详见
+        # 路径计数与示例：[[../../算法讲解/cte-寻找公共分支.md]] 的“路径计数”一节。
         counting_visitor = _CountDataflowNodeVisitor()
         for node in nodes:
             node.accept(counting_visitor)
 
         node_to_common_count = counting_visitor.get_node_counts()
 
+        # 找出访问计数超过1的那些节点
         common_nodes: MutableOrderedSet[DataflowPlanNode] = MutableOrderedSet()
         for node, count in node_to_common_count.items():
             if count > 1:
                 common_nodes.add(node)
 
+        # 第二遍沿每条路径遇到首个公共节点就停止，避免把同一共享分支的每层都选作 CTE。
         common_branches_visitor = _FindLargestCommonBranchesVisitor(common_nodes)
 
         common_branches: MutableOrderedSet[DataflowPlanNode] = MutableOrderedSet()
@@ -93,6 +99,8 @@ class _CountDataflowNodeVisitor(DataflowPlanNodeVisitorWithDefaultHandler[None])
 
     @override
     def _default_handler(self, node: DataflowPlanNode) -> None:
+        # 计数是到达次数而非直接消费者数；共享节点再次到达时，其全部上游也会再次计数。
+        # 例如根经 A、B 两条路径到达 C -> D，则 C、D 都计为 2，见上述文档“示例一”。
         for parent_node in node.parent_nodes:
             parent_node.accept(self)
         self._node_to_count[node] += 1
@@ -113,6 +121,9 @@ class _FindLargestCommonBranchesVisitor(DataflowPlanNodeVisitorWithDefaultHandle
         # Traversal starts from the sink and moves to parents (upstream). Checking
         # membership before recursion ensures we return the largest common branch root
         # on the current path, not a smaller nested branch.
+        # 只截断当前路径，不在全图屏蔽上游：C -> F、B -> F 时仍可能同时选中 C 和 F。
+        # 嵌套共享与依赖替代：[[../../算法讲解/cte-寻找公共分支.md]] 的“示例二：C 和 B 都直接使用 F”一节。
+        # 此处不检查 C 是否透传 F 的输出，也不改写 B 的输入；那属于另一层语义规划。
         if node in self._common_nodes:
             return FrozenOrderedSet([node])
 
